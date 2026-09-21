@@ -121,6 +121,7 @@ def install_modpack_if_needed(server) -> None:
         return
     sid = server["id"]
     ref = server["modpack_ref"]
+    prior_status = server.get("status", "offline")
     log_line(sid, f"[modpack] Installing '{ref}' from {source}…", "system")
     set_status(sid, "installing")
     with db().cursor() as c:
@@ -132,10 +133,13 @@ def install_modpack_if_needed(server) -> None:
         pack_resolver.install(source, ref, wd, lambda l, lv: log_line(sid, l, lv), cf_api_key=cf_key)
         with db().cursor() as c:
             c.execute("UPDATE servers SET modpack_status='installed' WHERE id=%s", (sid,))
+        # Restore the server's operational status now that the install is done
+        set_status(sid, prior_status if prior_status not in ("installing", "starting") else "offline")
         log_line(sid, "[modpack] ✓ Ready to boot", "system")
     except Exception as e:
         with db().cursor() as c:
             c.execute("UPDATE servers SET modpack_status='failed' WHERE id=%s", (sid,))
+        set_status(sid, "crashed")
         log_line(sid, f"[modpack] ✗ FAILED: {e}", "error")
         raise
 

@@ -77,11 +77,21 @@ def _extract_overrides(zf: zipfile.ZipFile, work_dir: Path, override_folder: str
     """Extract overrides/* into the server root, mirroring CurseForge modpack spec."""
     count = 0
     prefix = override_folder.rstrip("/") + "/"
+    work_root = work_dir.resolve()
     for member in zf.namelist():
         if not member.startswith(prefix) or member.endswith("/"):
             continue
         rel = member[len(prefix):]
-        target = work_dir / rel
+        # Reject absolute paths and traversal segments
+        if rel.startswith("/") or ".." in Path(rel).parts:
+            log(f"[modpack] ! skipped unsafe override path {rel!r}", "warn")
+            continue
+        target = (work_dir / rel).resolve()
+        try:
+            target.relative_to(work_root)
+        except ValueError:
+            log(f"[modpack] ! skipped out-of-sandbox path {rel!r}", "warn")
+            continue
         target.parent.mkdir(parents=True, exist_ok=True)
         with zf.open(member) as src, open(target, "wb") as dst:
             dst.write(src.read())

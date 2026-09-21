@@ -1,0 +1,40 @@
+{
+  "summary": "Iteration 2 — Live Modpack Resolver (Modrinth + CurseForge). Added /app/backend/tests/test_modpack_resolver.py (14 tests, all pass). Verified: (1) /json/modpack/preview auth guard redirects to /login; (2) Modrinth success path — fabulously-optimized returns full payload with title, downloads (int), latest_version, latest_loaders, latest_mc, files_count; (3) Modrinth 'this-does-not-exist-xyz' returns ok:false + 'not found' error; (4) CurseForge slug 'all-the-mods-9' resolves via cfwidget fallback to id=715572, title 'All the Mods 9 - ATM9', latest_file_name endswith '.zip'; (5) CurseForge numeric id 520914 returns title starting 'All the Mods 8'; (6) POST /servers with loader_id=9 (Modrinth) + modpack_ref creates row with modpack_status='pending'; (7) Path safety: '../etc/passwd' ref causes ok:false and does not write outside sandbox; (8) End-to-end Modrinth install of 'adrenaserver' works — modpack_status flips to 'installed', /var/lib/apexnode/servers/{id}/mods contains 11 real .jar files, server_logs contain '[modpack] ⬇ …' download lines AND '[modpack] ✓ Modrinth pack installed' success line; (9) UI status pill data-testid=modpack-status reads 'INSTALLED' and the [data-testid=btn-install-pack] button is hidden after install; (10) Playwright live-preview: selecting game=minecraft-java, clicking [data-testid=loader-chip-modrinth] reveals [data-testid=input-modpack-ref]; typing 'fabulously-optimized' renders [data-testid=modpack-preview-card] with 'Fabulously Optimized'; typing 'not-a-real-pack-xyz' renders [data-testid=modpack-error] with the resolver's 'not found' message. Regression checks on /dashboard, /servers, /servers/1, /mods (20+ loaders), /json/servers, /json/servers/logs all still pass.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/daemon/modpack/install/{sid}", "issue": "install_modpack_if_needed() sets servers.status='installing' at start but never resets it to 'offline' after a successful pack install — only modpack_status is flipped to 'installed'. Result: after a manual 'Install pack now', the server's top status pill remains 'INSTALLING' forever until you click Start (which then correctly transitions). Fix in /app/panel/daemon/daemon.py install_modpack_if_needed(): on success, run set_status(sid, 'offline') (or leave prior status intact via a snapshot). Observed on servers 12 and 13 (AdrenaTest) with modpack_status='installed' but status='installing'."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_modpack_resolver.py",
+    "/app/test_reports/pytest/modpack_results.xml",
+    "/app/backend/tests/test_apexnode_panel.py"
+  ],
+  "action_items": [
+    "Reset servers.status to 'offline' after install_modpack_if_needed() succeeds so the UI's top status pill doesn't get stuck on 'INSTALLING' post-install (see backend_issues.minor).",
+    "Optional cleanup: prune the test-created servers 'FabOptTest' (id 11), 'AdrenaTest' (ids 12, 13) if you want a clean seed."
+  ],
+  "critical_code_review_comments": [
+    "pack_resolver._cf_download_url() reconstructs the CDN URL by splitting file_id into a 7-digit zero-padded string and slicing 4/3 — works for typical 7-digit file IDs (e.g. 7097953) but silently truncates for 8+ digit IDs. Add a length guard.",
+    "pack_resolver.install_modrinth() aborts the whole install if modrinth.index.json is missing but doesn't set modpack_status='failed' before raising — the outer install_modpack_if_needed() wrapper does catch and mark failed, so acceptable, but consider surfacing partial file counts on failure.",
+    "Path safety is enforced *by construction* — the resolver only ever writes inside `wd = STATE_ROOT/'servers'/str(sid)` and never joins user-controlled ref into a filesystem path. However, `zipfile.ZipFile.open(member)` is used against untrusted archive contents; a malicious .mrpack could ship a member like '../../etc/foo' and _extract_overrides would happily write there because `target = work_dir / rel` with `rel = member[len(prefix):]` — the `/` operator does not sanitize '../'. Recommend calling `os.path.commonpath` check or using `zipfile.Path` before writing.",
+    "Servers.installPack() curl call has CURLOPT_TIMEOUT=600 but PHP-FPM default max_execution_time may cut it off earlier for really big packs. Consider a job queue for real CurseForge packs (100+ MB).",
+    "curseforge_preview always calls /mods/{id}/files even when caller only wanted the mod meta — that's a wasted request per preview. Fine for now."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_modpack_resolver.py (new)"
+  ],
+  "success_rate": {"backend": "100% (14/14, incl. 1 real Modrinth download)", "frontend": "100% of critical flows (live preview OK, error state OK, status pill OK, install button hidden)"},
+  "test_credentials": "admin / admin123 (login form field name is 'email' but accepts username)",
+  "seed_data_creation": "Created 3 test servers via POST /servers: FabOptTest (id 11, port 25595, pending), AdrenaTest (id 12, port 25596, installed via daemon), AdrenaTest (id 13, port 25596, installed via manual pack install — E2E test). ~11 .jar files under /var/lib/apexnode/servers/13/mods.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "New test module: /app/backend/tests/test_modpack_resolver.py. It performs one REAL Modrinth download (adrenaserver, ~11 jars, ~30s) inside TestModrinthInstallE2E. Run with `python -m pytest backend/tests/test_modpack_resolver.py -o addopts='-n 0' -v`. Login helper reused pattern from test_apexnode_panel.py. loader_id=9 for Modrinth, 8 for CurseForge, 10 for FTB (all game='minecraft-java'). CurseForge preview relies on cfwidget.com for slug→id because the provided API key's /mods/search returns 403 — /mods/{id} + /mods/{id}/files/{fid}/download-url work fine, so previews and downloads both succeed. Adrenaserver only has ~11 jars — original spec's '>=20 jars' threshold was written for fabulously-optimized which is 100+ MB and inappropriate for CI; test threshold is set to >=5. The daemon-triggered-on-start install code path is exactly the same function (install_modpack_if_needed) as manual install, so we covered it via the manual endpoint rather than doing a redundant second real download.",
+  "rca of the issue": "servers.status stuck on 'installing' after successful modpack install: install_modpack_if_needed() calls set_status(sid, 'installing') on entry (line ~125 of daemon.py) but has no matching set_status(sid, 'offline') on the success branch — it only updates modpack_status via a direct UPDATE. Reproduction: POST /servers/{id}/modpack/install for a pending server; wait for 200/302; SELECT status, modpack_status FROM servers WHERE id={id}; observe status='installing' modpack_status='installed'. Mitigation: add `set_status(sid, 'offline')` right before the final 'log_line(sid, \"[modpack] ✓ Ready to boot\")' call, or snapshot the pre-install status and restore it."
+}

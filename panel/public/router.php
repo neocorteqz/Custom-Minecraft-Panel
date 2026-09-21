@@ -53,7 +53,87 @@ $routes = [
     'GET /install-daemon.sh'       => ['App\\Controllers\\Install', 'daemonScript'],
     'GET /manifest.webmanifest'    => ['App\\Controllers\\Pwa', 'manifest'],
     'GET /service-worker.js'       => ['App\\Controllers\\Pwa', 'serviceWorker'],
+
+    'GET /eggs'                    => ['App\\Controllers\\Eggs', 'index'],
+    'GET /mods'                    => ['App\\Controllers\\Mods', 'index'],
+    'GET /json/loaders'            => ['App\\Controllers\\Mods', 'apiForGame'],
 ];
+
+// Mods dynamic
+if (preg_match('#^/mods/(\d+)$#', $path, $m) && $method === 'GET') {
+    require_once __DIR__ . '/../app/Controllers/Mods.php';
+    (new App\Controllers\Mods())->show((int)$m[1]); return true;
+}
+
+// Egg dynamic routes
+if (preg_match('#^/eggs/(\d+)$#', $path, $m) && $method === 'GET') {
+    require_once __DIR__ . '/../app/Controllers/Eggs.php';
+    (new App\Controllers\Eggs())->show((int)$m[1]); return true;
+}
+if (preg_match('#^/eggs/(\d+)/deploy$#', $path, $m) && $method === 'GET') {
+    require_once __DIR__ . '/../app/Controllers/Eggs.php';
+    (new App\Controllers\Eggs())->deploy((int)$m[1]); return true;
+}
+
+// File Manager
+if (preg_match('#^/servers/(\d+)/files$#', $path, $m) && $method === 'GET') {
+    require_once __DIR__ . '/../app/Controllers/Files.php';
+    (new App\Controllers\Files())->index((int)$m[1]); return true;
+}
+if (preg_match('#^/servers/(\d+)/files/edit$#', $path, $m) && $method === 'GET') {
+    require_once __DIR__ . '/../app/Controllers/Files.php';
+    (new App\Controllers\Files())->edit((int)$m[1]); return true;
+}
+if (preg_match('#^/servers/(\d+)/files/save$#', $path, $m) && $method === 'POST') {
+    require_once __DIR__ . '/../app/Controllers/Files.php';
+    (new App\Controllers\Files())->save((int)$m[1]); return true;
+}
+if (preg_match('#^/servers/(\d+)/files/mkdir$#', $path, $m) && $method === 'POST') {
+    require_once __DIR__ . '/../app/Controllers/Files.php';
+    (new App\Controllers\Files())->mkdir((int)$m[1]); return true;
+}
+if (preg_match('#^/servers/(\d+)/files/touch$#', $path, $m) && $method === 'POST') {
+    require_once __DIR__ . '/../app/Controllers/Files.php';
+    (new App\Controllers\Files())->touch((int)$m[1]); return true;
+}
+if (preg_match('#^/servers/(\d+)/files/delete$#', $path, $m) && $method === 'POST') {
+    require_once __DIR__ . '/../app/Controllers/Files.php';
+    (new App\Controllers\Files())->delete((int)$m[1]); return true;
+}
+if (preg_match('#^/servers/(\d+)/files/upload$#', $path, $m) && $method === 'POST') {
+    require_once __DIR__ . '/../app/Controllers/Files.php';
+    (new App\Controllers\Files())->upload((int)$m[1]); return true;
+}
+if (preg_match('#^/servers/(\d+)/files/download$#', $path, $m) && $method === 'GET') {
+    require_once __DIR__ . '/../app/Controllers/Files.php';
+    (new App\Controllers\Files())->download((int)$m[1]); return true;
+}
+
+// Backups
+if (preg_match('#^/servers/(\d+)/backups$#', $path, $m) && $method === 'GET') {
+    require_once __DIR__ . '/../app/Controllers/Backups.php';
+    (new App\Controllers\Backups())->index((int)$m[1]); return true;
+}
+if (preg_match('#^/servers/(\d+)/backups/schedule$#', $path, $m) && $method === 'POST') {
+    require_once __DIR__ . '/../app/Controllers/Backups.php';
+    (new App\Controllers\Backups())->saveSchedule((int)$m[1]); return true;
+}
+if (preg_match('#^/servers/(\d+)/backups/run$#', $path, $m) && $method === 'POST') {
+    require_once __DIR__ . '/../app/Controllers/Backups.php';
+    (new App\Controllers\Backups())->runNow((int)$m[1]); return true;
+}
+if (preg_match('#^/servers/(\d+)/backups/restore$#', $path, $m) && $method === 'POST') {
+    require_once __DIR__ . '/../app/Controllers/Backups.php';
+    (new App\Controllers\Backups())->restore((int)$m[1]); return true;
+}
+if (preg_match('#^/servers/(\d+)/backups/delete$#', $path, $m) && $method === 'POST') {
+    require_once __DIR__ . '/../app/Controllers/Backups.php';
+    (new App\Controllers\Backups())->delete((int)$m[1]); return true;
+}
+if (preg_match('#^/servers/(\d+)/backups/download$#', $path, $m) && $method === 'GET') {
+    require_once __DIR__ . '/../app/Controllers/Backups.php';
+    (new App\Controllers\Backups())->download((int)$m[1]); return true;
+}
 
 // Server detail routes (dynamic ID)
 if (preg_match('#^/servers/(\d+)$#', $path, $m) && $method === 'GET') {

@@ -1,0 +1,32 @@
+{
+  "summary": "First full test run of ApexNode Panel v2 (PHP panel + FastAPI daemon). Wrote pytest suite with 34 tests covering PWA endpoints, auth guard, sidebar nav, servers CRUD/detail, real daemon start/stop bridge (via /servers/action -> http daemon), Mods/loader endpoints, /json/loaders JSON API, Eggs list/detail/deploy form, Theme customizer persistence, /theme.css per-user CSS, Discord bogus-token flash-error path, Backups (manual run -> COMPLETED row), Files index + path-traversal sandbox. All 34 backend tests pass. Playwright UI run also passes: login, dashboard tiles, file manager (create folder, create file, save, reopen with persisted content), egg list + CS2 filter chip, egg detail, /servers/new loader picker refetches on game=cs2 and shows CS2 loader chips, backup completes, Discord test with bogus token surfaces red flash without crash.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/discord", "issues": ["Status pill reads 'DISCONNECTED' rather than 'FAILED' after a bogus-token test as the review request phrased it. Functionally correct (red flash 'Set a bot token first.' is shown and page does not crash) — cosmetic label mismatch vs spec."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_apexnode_panel.py",
+    "/app/test_reports/pytest/apexnode_results.xml"
+  ],
+  "action_items": [
+    "(Optional) Make the Discord status pill read 'FAILED' (not 'DISCONNECTED') when a token test fails, to match the review request wording."
+  ],
+  "critical_code_review_comments": [
+    "Login form uses field name 'email' (accepts either email or username via SQL OR). Test credentials md correctly documents both forms; no bug, but worth noting that the input placeholder should reflect that.",
+    "check_csrf() responds 419 + JSON on failure even for HTML form posts; UX-wise you might want to flash and redirect instead of dumping JSON in a form context. Not a blocker.",
+    "Backup runner and daemon are supervisor-managed; ensure production install script wires them into systemd equivalently (install.sh already does).",
+    "Theme controller stores mode/radius as strings; radius is stored as '12px' string not integer — fine but validate range/whitelist to avoid CSS injection through user input (currently only accent is regex-validated)."
+  ],
+  "updated_files": ["/app/backend/tests/test_apexnode_panel.py"],
+  "success_rate": {"backend": "100% (34/34)", "frontend": "100% of critical flows"},
+  "test_credentials": "admin / admin123 (login form field name is 'email' but accepts username too)",
+  "seed_data_creation": "Reused seeded servers (Survival SMP, Bedrock Realm, CS2 5v5 EU, Rust Vanilla, Creative Build) and 9 seeded eggs. Test created a 'plugins' folder + 'note.txt' under /var/lib/apexnode/servers/1/, a backup row for server 1, and set the admin theme accent to #A855F7.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Backend suite lives at /app/backend/tests/test_apexnode_panel.py and runs via `python -m pytest backend/tests/test_apexnode_panel.py -o addopts='-n 0'` (repo pytest.ini forces -n 2 --dist loadscope; my session-scoped login fixture is safe under loadscope because the whole module runs on one worker, but if you split classes across modules re-authenticate per module). Login POST uses field name 'email' (accepts username value). Daemon action endpoint is POST /servers/action with form fields id + action (NOT /servers/{id}/action). Route table is in /app/panel/public/router.php. /theme.css is per-session — fetch it through the authenticated session, not a bare requests.get.",
+  "rca of the issue": "N/A — no functional regressions found."
+}

@@ -3,71 +3,50 @@
 **Original problem statement**: Build a PHP-based game server installer panel (similar to Pterodactyl / MCSManager) with database integration, theme customizer, mobile app integration, Discord bot, that can be installed on Linux servers.
 
 ## User choices
-- Web-based demo/preview panel (PHP + MariaDB + Redis)
-- Games: Minecraft Java, Minecraft Bedrock, Counter-Strike 2, Rust
-- Discord bot: server status + start/stop/restart commands
-- Mobile: PWA shell
-- Clean efficient coding, runs on small VPS → dedicated
+- Web-based panel using PHP + MariaDB + Redis; games: Minecraft Java/Bedrock, CS2, Rust
+- Discord bot with status + start/stop/restart
+- PWA shell for mobile
+- Later requests: File Manager, Real Daemon Bridge, Marketplace Eggs, Scheduled Backups, and Server Installation chooser (Paper, Forge, Fabric, CurseForge, Modrinth, CS2 Metamod/CSSharp, Rust Oxide/Carbon)
 
 ## Architecture
-- **Backend**: PHP 8.2 (built-in server on port 3000 for preview; Nginx + PHP-FPM in production)
-- **DB**: MariaDB 10.11 (`apexnode` database, user `apexnode` / `apex_local_dev`)
-- **Cache**: Redis 7 (session/cache-ready, not yet used for hot paths)
-- **Discord bot**: Python 3 + discord.py, systemd unit (`apexnode-bot.service`)
-- **Node daemon**: Python 3 heartbeat + Docker for game runners (`apexnode-daemon.service`)
-- **PWA**: manifest + service worker; installs as an app on Android/iOS/Desktop
-
-## Directory structure
-```
-/app/panel
-├── public/             # web root
-│   ├── router.php      # single entry point router
-│   ├── assets/         # css, js, icons
-│   └── favicon.svg
-├── app/                # controllers, helpers, DB layer
-│   ├── DB.php
-│   ├── helpers.php
-│   └── Controllers/    # Auth, Dashboard, Servers, Nodes, Users, Theme, Discord, Activity, Install, Pwa, Home
-├── views/              # PHP views + layout partials
-├── config/config.php
-├── db/schema.sql       # 8 tables
-├── db/seed.php
-├── install/install.sh          # Linux one-liner installer
-├── install/install-daemon.sh   # Node daemon installer
-└── discord-bot/bot.py, requirements.txt
-```
+- **PHP 8.2** panel served by PHP built-in server on port 3000 (Nginx + PHP-FPM in production)
+- **MariaDB 10.11** database `apexnode`, user `apexnode / apex_local_dev`
+- **Redis 7** for caching / sessions (installed, not yet a hot path)
+- **Real ApexNode Daemon**: FastAPI/uvicorn on port 8001. Spawns real subprocesses for each server (currently `fake_game.py` demo binary), streams stdout to `server_logs`, exposes `/api/daemon/start/stop/restart/status/console/health`
+- **Backup runner**: PHP CLI script under supervisor, tars `/var/lib/apexnode/servers/{id}/` on interval, optional AWS/B2 S3 upload, retention enforcement
+- **Discord bot**: Python (discord.py) with slash commands
+- **PWA**: manifest + service worker + install banner
 
 ## Implemented (Jan 2026)
-- Session-based auth (bcrypt) with first-run admin bootstrap
-- Role-based access: admin / operator / viewer
-- CSRF protection on all forms + JSON endpoints
-- Dashboard: fleet stats (servers, online, nodes, players) + activity feed
-- Server list with live status/CPU/RAM/players polling (`/json/servers` every 4s)
-- Server detail page with live console (polling `/json/servers/logs`), start/stop/restart/kill/delete, resource meters, config
-- Console command input → recorded to server_logs + faked responses (`say`, `list`, `help`)
-- Server creation wizard (game, node, port, CPU, RAM, disk)
-- Node management (register/delete)
-- User management (invite/delete)
-- Theme customizer: accent color, radius, density, font, dark/light — live CSS variable preview + per-user DB persistence + dynamic `/theme.css`
-- Discord bot settings page + Discord API token verification (`GET /users/@me`)
-- Activity log page
-- PWA: manifest + service worker + install banner
-- Install scripts served from panel (`/install.sh`, `/install-daemon.sh`)
-- Seed data: 2 users, 3 nodes, 5 sample servers with initial logs
+- Session-based auth (bcrypt), roles admin/operator/viewer, CSRF everywhere, first-run admin bootstrap
+- Dashboard, Servers, Server Detail, Nodes, Users, Theme customizer (accent/radius/density/font/mode with dynamic `/theme.css`), Discord Bot integration + token verification, Activity log, Install docs (`/install.sh`, `/install-daemon.sh`)
+- **Real daemon lifecycle**: start/stop/restart/kill dispatch to `apex-daemon` service, live stdout streaming, real `console` stdin (send `say`, `list`, `stop`, `help` to running process)
+- **File Manager**: real filesystem-backed browser at `/servers/{id}/files`, folder navigation, edit files ≤512KB inline (Ctrl+S save), new file, new folder, upload, delete, download; all path operations sandboxed via `realpath` inside `/var/lib/apexnode/servers/{id}/`
+- **Egg Marketplace**: 9 templates (Vanilla/Paper/Forge Minecraft, Bedrock, CS2 Competitive/DM/Retakes, Rust Vanilla/PvE), one-tap deploy, download counter, per-egg files seeded on first daemon start
+- **Server Installation chooser** (`/mods`): 20 curated loaders/modpack sources — Vanilla, Paper, Purpur, Forge, NeoForge, Fabric, Quilt, CurseForge, Modrinth, FTB for MC Java; PocketMine-MP for Bedrock; Metamod:Source, CounterStrikeSharp, MatchZy, Workshop bundle for CS2; Oxide/uMod and Carbon for Rust; wizard live-swaps per selected game; modpack-source loaders require a slug/ID (CurseForge, Modrinth, FTB, Workshop)
+- **Scheduled Backups**: per-server schedule form (interval min, retention count, local disk or S3-compatible remote with endpoint/bucket/keys), manual "Backup Now", one-click restore (tar-extract into work_dir), download, delete
+- Seed data: 5 sample servers, 3 nodes, 20 loaders, 9 eggs, 2 users
 
-## Design language
-Tactical Command Tower — dark background (#090A0F), electric-cyan accent (#00F0FF) with cyber-violet secondary, JetBrains Mono captions, Outfit / Plus Jakarta Sans body, bento grid layouts, glowing status pills, streaming terminal panel.
+## Directory
+```
+/app/panel
+├── public/router.php + assets
+├── app/DB.php, helpers.php, Controllers/{Auth,Home,Dashboard,Servers,Nodes,Users,Theme,Discord,Activity,Install,Pwa,Eggs,Files,Backups,Mods}.php
+├── views/{auth,dashboard,servers,nodes,users,theme,discord,activity,install,errors,eggs,files,backups,mods}
+├── db/schema.sql, schema_v2.sql, schema_v3.sql, seed.php, seed_v2.php, seed_v3.php
+├── daemon/daemon.py, fake_game.py, requirements.txt      # real process manager
+├── scripts/backup_runner.php                             # scheduled backups
+├── discord-bot/bot.py, requirements.txt
+└── install/install.sh, install-daemon.sh
+```
 
-## Prioritized backlog
-- **P0**: Real daemon protocol (WebSocket → Docker exec) replacing simulated state
-- **P0**: Fine-grained RBAC (per-server ACLs)
-- **P1**: Backups (S3/B2), scheduled tasks, subusers
-- **P1**: File manager (SFTP or in-browser edit)
-- **P1**: SSL setup step in `install.sh` (Certbot)
-- **P1**: Redis-backed session store and rate limits on auth
-- **P2**: Multi-language i18n
-- **P2**: Marketplace of game egg templates
-- **P2**: Native mobile wrapper (Capacitor build of PWA)
+## Prioritized backlog (P0/P1/P2)
+- **P0**: Real Docker/OS process shims per loader (Paper JAR, Forge installer, Docker images from eggs)
+- **P0**: Live CurseForge / Modrinth manifest resolvers to actually download modpacks
+- **P1**: WebSocket for console + metrics (replace 1.5s poll)
+- **P1**: Nginx + SSL via Certbot in `install.sh`, Redis-backed sessions & rate limits
+- **P1**: Per-server ACLs / subusers
+- **P2**: i18n, marketplace publishing flow, Capacitor mobile wrapper of PWA
 
-## Test credentials
-See `/app/memory/test_credentials.md`
+## Credentials & preview
+See `/app/memory/test_credentials.md`. Preview URL: https://69a53a13-fcf8-447b-9ea3-aa05080c4689.preview.emergentagent.com/

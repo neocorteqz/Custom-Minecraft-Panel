@@ -1,0 +1,116 @@
+{
+  "project_name": "ApexNode Game Server Panel & Daemon Control Tower",
+  "app_type": "hybrid_fullstack",
+  "archetype": "TACTICAL_COMMAND_TOWER",
+  "theme": {
+    "default_mode": "dark",
+    "palette": {
+      "background": "#090A0F",
+      "surface_base": "#12151E",
+      "surface_card": "#181C28",
+      "surface_hover": "#222738",
+      "border": "#2E364A",
+      "border_glow": "rgba(0, 240, 255, 0.25)",
+      "text_primary": "#F1F5F9",
+      "text_secondary": "#94A3B8",
+      "text_muted": "#64748B",
+      "accent_primary": "#00F0FF",
+      "accent_primary_glow": "rgba(0, 240, 255, 0.4)",
+      "accent_secondary": "#7928CA",
+      "status_online": "#10B981",
+      "status_starting": "#F59E0B",
+      "status_offline": "#EF4444",
+      "status_installing": "#3B82F6"
+    },
+    "customizer_variables": {
+      "accents": [
+        {"name": "Electric Cyan", "value": "#00F0FF"},
+        {"name": "Neon Emerald", "value": "#10B981"},
+        {"name": "Laser Amber", "value": "#F59E0B"},
+        {"name": "Cyber Violet", "value": "#A855F7"},
+        {"name": "Crimson Blaze", "value": "#FF3B30"}
+      ],
+      "radius_options": ["0px", "4px", "8px", "12px", "16px"],
+      "density_options": ["compact", "comfortable", "spacious"]
+    }
+  },
+  "typography": {
+    "font_family_headings": "Outfit, sans-serif",
+    "font_family_body": "Plus Jakarta Sans, sans-serif",
+    "font_family_mono": "'JetBrains Mono', 'Fira Code', monospace",
+    "scale": {
+      "h1": "text-4xl sm:text-5xl font-extrabold tracking-tight",
+      "h2": "text-2xl sm:text-3xl font-bold tracking-tight",
+      "h3": "text-xl sm:text-2xl font-semibold",
+      "h4": "text-lg font-semibold",
+      "body": "text-sm sm:text-base font-normal",
+      "caption": "text-xs font-mono uppercase tracking-widest text-slate-400"
+    }
+  },
+  "layout_strategies": {
+    "grid_system": "Bento High Density Grid for Dashboards (grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4)",
+    "container_padding": "p-4 sm:p-6 lg:p-8",
+    "navigation": {
+      "sidebar": "Fixed vertical panel on desktop (w-64), sticky header on mobile with glassmorphism backdrop (backdrop-blur-xl bg-[#090A0F]/90 border-b border-[#2E364A])",
+      "pwa_bar": "Mobile-optimized bottom bar for quick access to status, servers, nodes, and settings"
+    }
+  },
+  "key_components": {
+    "server_dashboard": {
+      "description": "Grid & list view of game instances (Minecraft Java, Bedrock, CS2, Rust)",
+      "cards": "Card items with direct status indicators (glowing LED dots), real-time resource usage bars, quick start/stop buttons, player count badges, and node tags.",
+      "filters": "Search by server name, game type selector, and status filter buttons."
+    },
+    "server_detail_page": {
+      "header": "Server identity with quick action bar (Start, Stop, Restart, Kill, Console, File Manager, Backups, Settings).",
+      "live_console": "Full-height terminal component with live streaming log view, ANSI color support, command input line, autocompletion, scroll lock, and clear logs CTA.",
+      "metrics_panel": "Real-time chart components showing CPU percentage, Memory allocation (MB/GB), Disk usage, and Network I/O throughput."
+    },
+    "server_creation_wizard": {
+      "steps": [
+        "1. Select Game (Minecraft Java/Bedrock, CS2, Rust)",
+        "2. Node & Port Allocation",
+        "3. Resource Limits (CPU, RAM, Disk)",
+        "4. Startup Commands & Environment Variables"
+      ],
+      "ui_pattern": "Interactive multi-step step-bar with live resource cost estimator summary card."
+    },
+    "theme_customizer": {
+      "features": "Real-time live color accent switcher, border radius controller, UI density toggler, and light/dark theme toggle with instant preview and save persistence."
+    },
+    "discord_bot_settings": {
+      "features": "Bot token input, server status webhooks configuration, channel binding mappings, prefix customizer, and test webhook button with live status indicator."
+    },
+    "node_management": {
+      "features": "Listing connected Linux daemon hosts, CPU core count, total RAM available, daemon version, connection latency ping indicator, and Add Node setup script generator."
+    },
+    "pwa_mobile_experience": {
+      "features": "Install prompt banner, swipeable server quick cards, compact live log monitor, and offline status fallback screen."
+    }
+  },
+  "image_urls": {
+    "games": {
+      "minecraft": "https://images.unsplash.com/photo-1760114333167-7f254ca9f3c4?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzF8MHwxfHNlYXJjaHwyfHxtaW5lY3JhZnQlMjBzZXJ2ZXIlMjBnYW1lcGxheXxlbnwwfHx8fDE3ODk5NTgxODJ8MA&ixlib=rb-4.1.0&q=85",
+      "cs2": "https://images.unsplash.com/photo-1726442008105-b6651bdfc32a?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2NDJ8MHwxfHNlYXJjaHw0fHxjb3VudGVyJTIwc3RyaWtlJTIwY3MyJTIwZ2FtaW5nfGVufDB8fHx8MTc4OTk1ODE4M3ww&ixlib=rb-4.1.0&q=85",
+      "rust": "https://images.pexels.com/photos/7915226/pexels-photo-7915226.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940"
+    },
+    "infrastructure": {
+      "server_rack": "https://images.pexels.com/photos/37730211/pexels-photo-37730211.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "datacenter_network": "https://images.unsplash.com/photo-1680691257251-5fead813b73e?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1Mjh8MHwxfHNlYXJjaHwyfHxzZXJ2ZXIlMjBkYXRhY2VudGVyJTIwaGFyZHdhcmUlMjByYWNrfGVufDB8fHx8MTc4OTk1ODE4Mnww&ixlib=rb-4.1.0&q=85"
+    }
+  },
+  "general_guidelines": {
+    "data_testid_rule": "ALL interactive and key informational elements MUST include a data-testid attribute formatted in kebab-case (e.g. data-testid=\"start-server-button\", data-testid=\"console-input-field\").",
+    "alignment_rule": "Do not center align the app root container (.App). Maintain left-aligned, structured command-panel flow.",
+    "hover_contrast_rule": "Always explicitly define text color on hover states (e.g. hover:bg-slate-800 hover:text-cyan-400) to ensure WCAG AA contrast compliance.",
+    "accessibility_rule": "All status indicators must pair color with textual or icon representation (e.g., green dot + 'ONLINE').",
+    "animation_rule": "Use Framer Motion or tailored CSS transitions for card hover elevations, status state transitions, and console log lines. Avoid universal transition: all."
+  },
+  "instructions_to_main_agent": [
+    "Implement the React frontend with Shadcn UI primitives customized according to the dark command tower theme.",
+    "Build out full interactive mock data state supporting server lifecycle actions (Start, Stop, Restart, Create, Delete).",
+    "Ensure real-time log streaming simulation with terminal line appending and command execution.",
+    "Provide live dynamic accent color updates via CSS custom properties when adjusted in the Theme Customizer.",
+    "Ensure all components contain explicit data-testid attributes for automated verification."
+  ]
+}

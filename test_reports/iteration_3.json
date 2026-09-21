@@ -1,0 +1,33 @@
+{
+  "summary": "Iteration 3 targeted retest of two iteration-2 bug fixes. All 8 tests PASS (12.7s). New test module /app/backend/tests/test_iteration3_fixes.py covers: (1) Fix #1 status-reset — created a fresh server (loader_id=9 Modrinth, ref=adrenaserver, unique name StatusFix3_{ts}), triggered POST /servers/{id}/modpack/install, waited for completion, verified DB: status='offline' AND modpack_status='installed'. UI verified: [data-testid=server-status] pill contains 'OFFLINE' and [data-testid=modpack-status] contains 'INSTALLED'. Real Modrinth download (~11 jars, ~10-12s). (2) Fix #2 ZIP traversal — imported /app/panel/daemon/pack_resolver.py directly, built a fake .mrpack in-memory with a benign member 'overrides/config/ok.txt' and a malicious member 'overrides/../../etc/foo.txt', called pack_resolver._extract_overrides(zf, tmp_wd, 'overrides', log). Confirmed: return count == 1, benign file was extracted at tmp_wd/config/ok.txt, /etc/foo.txt NOT written, log callback received a '[modpack] ! skipped' warning line. (3) Failure-path — created server with ref='adrenaserver', patched DB to 'definitely-not-a-real-pack-slug-xyz', called install: verified status='crashed', modpack_status='failed', server_logs contains a '[modpack] ✗ FAILED' line. (4) Regression sanity — /json/modpack/preview OK for both Modrinth (fabulously-optimized) and CurseForge (all-the-mods-9); /dashboard, /servers/1 (console text present); existing server id 14 still shows modpack_status='installed'.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration3_fixes.py",
+    "/app/test_reports/pytest/iteration3_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "install_modpack_if_needed correctly snapshots prior_status BEFORE calling set_status(sid,'installing'); on success it restores to prior_status (falling back to 'offline' if prior was itself 'installing'/'starting'). On failure it sets 'crashed'. Clean fix.",
+    "_extract_overrides now performs both a string-level check (rejects '..' components and absolute paths) AND a resolved-path containment check (target.resolve().relative_to(work_root)). Defense in depth — good.",
+    "Minor: the resolved-path check uses target.resolve() which follows symlinks. If a prior benign override created a symlink pointing outside work_dir, a later member could still write outside via the symlink. Consider using os.path.realpath with a strict prefix check, or refuse to overwrite existing symlinks. Not exploitable in current flow because overrides are extracted only once per fresh work_dir.",
+    "The success branch still sets modpack_status='installed' via a raw UPDATE followed by set_status() — two round-trips. Could be one UPDATE. Cosmetic."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration3_fixes.py (new)"
+  ],
+  "success_rate": {"backend": "100% (8/8)", "frontend": "100% (server-status + modpack-status pills verified in HTML)"},
+  "test_credentials": "admin / admin123",
+  "seed_data_creation": "Created 2 new test servers: StatusFix3_{ts} (real Modrinth adrenaserver install, ~11 jars, status='offline' modpack_status='installed') and FailPathTest_{ts} (crashed/failed with invalid slug). Auto-picked ports via MAX(port)+1.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Iteration 3 fixes verified. New test file at /app/backend/tests/test_iteration3_fixes.py runs in ~13s including one real ~11-jar Modrinth download. Both regressions (status-stuck-installing and ZIP traversal) are closed. Failure path also verified — invalid ref → status='crashed', modpack_status='failed', '[modpack] ✗ FAILED' log line present. Prior iteration test file test_modpack_resolver.py still available for full-suite runs.",
+  "rca of the issue": "Iter-2 bug #1 (status stuck 'installing'): FIXED at /app/panel/daemon/daemon.py:124-137 by snapshotting prior_status before set_status('installing') and restoring on success (or 'offline' if prior was transitional). Iter-2 bug #2 (ZIP traversal): FIXED at /app/panel/daemon/pack_resolver.py:76-101 by rejecting '..' in path components / absolute rels, plus enforcing target.resolve().relative_to(work_root). Both fixes verified end-to-end."
+}

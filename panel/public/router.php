@@ -57,6 +57,7 @@ $routes = [
     'GET /eggs'                    => ['App\\Controllers\\Eggs', 'index'],
     'GET /mods'                    => ['App\\Controllers\\Mods', 'index'],
     'GET /json/loaders'            => ['App\\Controllers\\Mods', 'apiForGame'],
+    'GET /json/modpack/preview'    => ['App\\Controllers\\Mods', 'apiPreview'],
 ];
 
 // Mods dynamic
@@ -76,6 +77,10 @@ if (preg_match('#^/eggs/(\d+)/deploy$#', $path, $m) && $method === 'GET') {
 }
 
 // File Manager
+if (preg_match('#^/servers/(\d+)/modpack/install$#', $path, $m) && $method === 'POST') {
+    require_once __DIR__ . '/../app/Controllers/Servers.php';
+    (new App\Controllers\Servers())->installPack((int)$m[1]); return true;
+}
 if (preg_match('#^/servers/(\d+)/files$#', $path, $m) && $method === 'GET') {
     require_once __DIR__ . '/../app/Controllers/Files.php';
     (new App\Controllers\Files())->index((int)$m[1]); return true;

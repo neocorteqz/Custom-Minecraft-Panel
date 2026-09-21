@@ -48,6 +48,7 @@
   <div class="form-group" id="modpack-ref-wrap" style="display:none">
     <label>Modpack slug or ID</label>
     <input name="modpack_ref" id="modpack-ref" placeholder="e.g. all-the-mods-9" data-testid="input-modpack-ref">
+    <div id="modpack-preview" data-testid="modpack-preview" style="margin-top:10px"></div>
   </div>
 
   <div class="section-title">5. Resources</div>
@@ -71,6 +72,8 @@
   const loaderInput = document.getElementById('loader-input');
   const packWrap = document.getElementById('modpack-ref-wrap');
   const packInput = document.getElementById('modpack-ref');
+  const preview = document.getElementById('modpack-preview');
+  let currentSource = null;
 
   async function refresh() {
     const game = gameSel.value;
@@ -78,13 +81,13 @@
     const r = await fetch('/json/loaders?game=' + encodeURIComponent(game));
     const data = await r.json();
     picker.innerHTML = '';
-    // "None" option first
     picker.appendChild(makeChip({id: '', slug: 'none', name: 'None (raw)', category: 'vanilla', logo_char: '∅', accent_color: '#64748B', requires_pack_id: 0}, true));
     data.forEach((l) => picker.appendChild(makeChip(l, false)));
-    // Auto-select None
     loaderInput.value = '';
     packWrap.style.display = 'none';
     packInput.required = false;
+    preview.innerHTML = '';
+    currentSource = null;
   }
   function makeChip(l, selected) {
     const btn = document.createElement('button');
@@ -103,13 +106,61 @@
       if (l.requires_pack_id) {
         packWrap.style.display = 'block';
         packInput.required = true;
+        currentSource = l.slug === 'modrinth' ? 'modrinth' : (l.slug === 'ftb' ? 'ftb' : (l.slug === 'workshop' ? 'workshop' : 'curseforge'));
       } else {
         packWrap.style.display = 'none';
         packInput.required = false;
+        currentSource = null;
       }
+      preview.innerHTML = '';
     });
     return btn;
   }
+
+  // Live preview
+  let debounce = null;
+  packInput.addEventListener('input', () => {
+    if (!currentSource || currentSource === 'workshop') return;
+    const ref = packInput.value.trim();
+    clearTimeout(debounce);
+    if (!ref) { preview.innerHTML = ''; return; }
+    debounce = setTimeout(() => resolvePreview(ref), 500);
+  });
+  async function resolvePreview(ref) {
+    preview.innerHTML = '<div class="chip">Resolving…</div>';
+    try {
+      const r = await fetch(`/json/modpack/preview?source=${encodeURIComponent(currentSource)}&ref=${encodeURIComponent(ref)}`);
+      const j = await r.json();
+      if (!j.ok) {
+        preview.innerHTML = `<div class="flash error" data-testid="modpack-error">${j.error || 'Not found'}</div>`;
+        return;
+      }
+      const d = j.data;
+      const chipsMc = (d.latest_mc || []).slice(0, 4).map(v => `<span class="chip">${v}</span>`).join(' ');
+      const chipsLoaders = (d.latest_loaders || []).slice(0, 3).map(v => `<span class="chip accent">${v}</span>`).join(' ');
+      const authors = d.authors ? d.authors.join(', ') : (d.team || '');
+      preview.innerHTML = `
+        <div class="card" style="border-color:var(--accent);padding:14px" data-testid="modpack-preview-card">
+          <div class="between" style="margin-bottom:6px">
+            <h3 style="margin:0">${escapeHtml(d.title)}</h3>
+            <span class="chip accent">${d.source.toUpperCase()}</span>
+          </div>
+          <p class="muted" style="margin:4px 0">${escapeHtml(d.description || '')}</p>
+          <div class="mono muted" style="font-size:11px;margin:8px 0">
+            ${d.downloads ? '⬇ ' + Number(d.downloads).toLocaleString() + ' downloads' : ''}
+            ${d.latest_version ? ' · v' + escapeHtml(d.latest_version) : ''}
+            ${d.latest_file_name ? ' · ' + escapeHtml(d.latest_file_name) : ''}
+            ${authors ? ' · by ' + escapeHtml(authors) : ''}
+            ${d.files_count ? ' · ' + d.files_count + ' files' : ''}
+          </div>
+          <div class="row">${chipsLoaders}${chipsMc}</div>
+        </div>`;
+    } catch (e) {
+      preview.innerHTML = `<div class="flash error">${e.message}</div>`;
+    }
+  }
+  function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
   gameSel.addEventListener('change', refresh);
   refresh();
 })();

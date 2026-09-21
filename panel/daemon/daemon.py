@@ -25,6 +25,8 @@ import pymysql
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+import pack_resolver
+
 DB_HOST = os.environ.get("DB_HOST", "127.0.0.1")
 DB_USER = os.environ.get("DB_USER", "apexnode")
 DB_PASS = os.environ.get("DB_PASS", "apex_local_dev")
@@ -71,6 +73,21 @@ def get_egg(egg_id):
         return c.fetchone()
 
 
+def get_loader(loader_id):
+    if not loader_id:
+        return None
+    with db().cursor() as c:
+        c.execute("SELECT * FROM mod_loaders WHERE id=%s", (loader_id,))
+        return c.fetchone()
+
+
+def get_setting(key: str) -> str:
+    with db().cursor() as c:
+        c.execute("SELECT v FROM settings WHERE k=%s", (key,))
+        row = c.fetchone()
+        return row["v"] if row else ""
+
+
 def set_status(sid: int, status: str, **fields):
     parts = ["status=%s"]
     args = [status]
@@ -80,6 +97,47 @@ def set_status(sid: int, status: str, **fields):
     args.append(sid)
     with db().cursor() as c:
         c.execute(f"UPDATE servers SET {', '.join(parts)} WHERE id=%s", args)
+
+
+MODPACK_SOURCES = {
+    "curseforge": "curseforge",
+    "modrinth":   "modrinth",
+    "ftb":        "curseforge",   # FTB is delivered as a CurseForge pack
+    "workshop":   None,           # CS2 workshop — handled elsewhere
+}
+
+
+def install_modpack_if_needed(server) -> None:
+    """If server has a modpack-source loader + a ref and no install yet, run resolver."""
+    if not server.get("loader_id") or not server.get("modpack_ref"):
+        return
+    if server.get("modpack_status") == "installed":
+        return
+    loader = get_loader(server["loader_id"])
+    if not loader or loader["category"] != "modpack_source":
+        return
+    source = MODPACK_SOURCES.get(loader["slug"])
+    if not source:
+        return
+    sid = server["id"]
+    ref = server["modpack_ref"]
+    log_line(sid, f"[modpack] Installing '{ref}' from {source}…", "system")
+    set_status(sid, "installing")
+    with db().cursor() as c:
+        c.execute("UPDATE servers SET modpack_status='installing' WHERE id=%s", (sid,))
+    wd = STATE_ROOT / "servers" / str(sid)
+    wd.mkdir(parents=True, exist_ok=True)
+    cf_key = get_setting("curseforge_api_key")
+    try:
+        pack_resolver.install(source, ref, wd, lambda l, lv: log_line(sid, l, lv), cf_api_key=cf_key)
+        with db().cursor() as c:
+            c.execute("UPDATE servers SET modpack_status='installed' WHERE id=%s", (sid,))
+        log_line(sid, "[modpack] ✓ Ready to boot", "system")
+    except Exception as e:
+        with db().cursor() as c:
+            c.execute("UPDATE servers SET modpack_status='failed' WHERE id=%s", (sid,))
+        log_line(sid, f"[modpack] ✗ FAILED: {e}", "error")
+        raise
 
 
 def ensure_workdir(server) -> Path:
@@ -154,6 +212,13 @@ async def start(sid: int):
         return {"status": "already_running", "pid": processes[sid].pid}
 
     wd = ensure_workdir(s)
+    # Real modpack install step (Modrinth / CurseForge / FTB) — blocking, runs in threadpool
+    try:
+        await asyncio.get_event_loop().run_in_executor(None, install_modpack_if_needed, s)
+    except Exception as e:
+        raise HTTPException(500, f"modpack install failed: {e}")
+    # Re-fetch to pick up any updated fields
+    s = get_server(sid)
     egg = get_egg(s.get("egg_id"))
     cmd = build_start_cmd(s, egg)
     log_line(sid, f"[daemon] boot: {cmd}", "system")
@@ -255,6 +320,36 @@ async def console(sid: int, payload: ConsoleIn):
 @app.get("/api/daemon/health")
 async def health():
     return {"status": "ok", "running_servers": len([p for p in processes.values() if p.poll() is None])}
+
+
+@app.get("/api/daemon/modpack/preview")
+async def modpack_preview(source: str, ref: str):
+    """Preview a Modrinth or CurseForge modpack by slug/ID."""
+    cf_key = get_setting("curseforge_api_key")
+    loop = asyncio.get_event_loop()
+    try:
+        data = await loop.run_in_executor(None, pack_resolver.preview, source, ref, cf_key)
+        return {"ok": True, "data": data}
+    except pack_resolver.ResolveError as e:
+        return {"ok": False, "error": str(e)}
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+
+@app.post("/api/daemon/modpack/install/{sid}")
+async def modpack_install(sid: int):
+    """Manually trigger modpack install for a server (does not start the process)."""
+    s = get_server(sid)
+    if not s:
+        raise HTTPException(404, "server not found")
+    if s.get("modpack_status") == "installed":
+        return {"ok": True, "already_installed": True}
+    loop = asyncio.get_event_loop()
+    try:
+        await loop.run_in_executor(None, install_modpack_if_needed, s)
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 
 if __name__ == "__main__":

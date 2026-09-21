@@ -11,7 +11,6 @@ class Mods {
         if ($game !== 'all') { $sql .= ' WHERE game=?'; $args[] = $game; }
         $sql .= ' ORDER BY popular DESC, category, name';
         $loaders = DB::all($sql, $args);
-        // Group by game for the browse view
         $by_game = [];
         foreach ($loaders as $l) { $by_game[$l['game']][] = $l; }
         \view('mods/index', ['title'=>'Server Installations','loaders'=>$loaders,'by_game'=>$by_game,'filter'=>$game]);
@@ -31,5 +30,21 @@ class Mods {
         }
         $rows = DB::all('SELECT id, slug, name, category, tagline, logo_char, accent_color, requires_pack_id, popular FROM mod_loaders WHERE game=? ORDER BY popular DESC, category, name', [$game]);
         \json_response($rows);
+    }
+    public function apiPreview() {
+        \require_login();
+        $source = $_GET['source'] ?? '';
+        $ref = trim($_GET['ref'] ?? '');
+        // Normalize FTB → curseforge (FTB packs are hosted on CurseForge)
+        if ($source === 'ftb') $source = 'curseforge';
+        if (!$ref || !in_array($source, ['modrinth','curseforge'])) {
+            \json_response(['ok'=>false, 'error'=>'invalid source or ref']);
+        }
+        $url = "http://127.0.0.1:8001/api/daemon/modpack/preview?source=".urlencode($source)."&ref=".urlencode($ref);
+        $ctx = stream_context_create(['http'=>['timeout'=>20,'ignore_errors'=>true]]);
+        $resp = @file_get_contents($url, false, $ctx);
+        if ($resp === false) \json_response(['ok'=>false,'error'=>'daemon unreachable']);
+        header('Content-Type: application/json');
+        echo $resp;
     }
 }

@@ -50,6 +50,16 @@
       <?php endif; ?>
       <?php if (!empty($s['modpack_ref'])): ?>
         <tr><td class="muted">Modpack</td><td class="mono"><?= h($s['modpack_ref']) ?></td></tr>
+        <tr><td class="muted">Pack status</td>
+            <td>
+              <span class="status status-<?= ($s['modpack_status']==='installed'?'online':($s['modpack_status']==='failed'?'offline':'starting')) ?>" data-testid="modpack-status"><?= strtoupper($s['modpack_status'] ?: 'PENDING') ?></span>
+              <?php if (in_array($s['modpack_status'], ['pending','failed','none',''], true)): ?>
+                <form method="post" action="/servers/<?= (int)$s['id'] ?>/modpack/install" style="display:inline-block;margin-left:8px">
+                  <?= csrf_field() ?>
+                  <button class="btn btn-sm btn-primary" data-testid="btn-install-pack">⬇ Install pack now</button>
+                </form>
+              <?php endif; ?>
+            </td></tr>
       <?php endif; ?>
       <tr><td class="muted">Port</td><td class="mono"><?= (int)$s['port'] ?></td></tr>
       <tr><td class="muted">Node</td><td class="mono"><?= h($s['node_name']) ?></td></tr>

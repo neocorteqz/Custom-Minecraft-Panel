@@ -43,6 +43,7 @@ class Servers {
             'name'=>$name,'game'=>$game,'egg_id'=>$egg ? $egg['id'] : null,
             'loader_id' => $loader ? $loader['id'] : null,
             'modpack_ref' => $modpack_ref ?: null,
+            'modpack_status' => ($loader && $loader['category']==='modpack_source' && $modpack_ref) ? 'pending' : 'none',
             'node_id'=>$node_id,'owner_id'=>$u['id'],
             'port'=>$port,'cpu_limit'=>$cpu,'ram_mb'=>$ram,'disk_gb'=>$disk,
             'status'=>'installing','version'=>$egg ? $egg['name'] : ($loader ? $loader['name'] : 'latest'),
@@ -163,9 +164,29 @@ class Servers {
         if ($code >= 200 && $code < 300) {
             \json_response(['ok'=>true]);
         }
-        // Fallback: record command locally
         DB::q('INSERT INTO server_logs (server_id, line, level) VALUES (?,?,?)', [$id, '> '.$cmd, 'system']);
         DB::q('INSERT INTO server_logs (server_id, line, level) VALUES (?,?,?)', [$id, '[daemon] unreachable — command not delivered', 'warn']);
         \json_response(['ok'=>false]);
+    }
+
+    public function installPack(int $id) {
+        \check_csrf(); \require_role('operator');
+        $s = DB::one('SELECT * FROM servers WHERE id=?', [$id]);
+        if (!$s) { \flash('error','Server not found.'); \redirect('/servers'); }
+        if (empty($s['modpack_ref'])) { \flash('error','No modpack configured for this server.'); \redirect('/servers/'.$id); }
+        // Fire and forget — the daemon returns after resolve completes (may be minutes for large packs)
+        // We run it via a short-lived curl. For real-world scale you'd background this via a job queue.
+        $ch = curl_init("http://127.0.0.1:8001/api/daemon/modpack/install/$id");
+        curl_setopt_array($ch, [CURLOPT_POST=>true, CURLOPT_RETURNTRANSFER=>true, CURLOPT_TIMEOUT=>600]);
+        $resp = curl_exec($ch);
+        $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+        $json = json_decode($resp ?: '{}', true) ?: [];
+        if (!empty($json['ok'])) {
+            \flash('success','Modpack installed — check the console for the full log.');
+        } else {
+            \flash('error','Install failed: '.($json['error'] ?? "HTTP $code"));
+        }
+        \redirect('/servers/'.$id);
     }
 }

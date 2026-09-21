@@ -27,6 +27,44 @@ from pydantic import BaseModel
 
 import pack_resolver
 
+
+def create_job(kind: str, target_kind: str, target_id: int, message: str = "") -> int:
+    with db().cursor() as c:
+        c.execute(
+            "INSERT INTO jobs (kind, target_kind, target_id, status, message) VALUES (%s,%s,%s,'queued',%s)",
+            (kind, target_kind, target_id, message[:255]),
+        )
+        return c.lastrowid
+
+
+def job_running(job_id: int):
+    with db().cursor() as c:
+        c.execute("UPDATE jobs SET status='running', started_at=NOW() WHERE id=%s", (job_id,))
+
+
+def job_progress(job_id: int, done: int, total: int, message: str = ""):
+    with db().cursor() as c:
+        c.execute(
+            "UPDATE jobs SET progress=%s, total=%s, message=%s WHERE id=%s",
+            (done, total, message[:255], job_id),
+        )
+
+
+def job_complete(job_id: int):
+    with db().cursor() as c:
+        c.execute(
+            "UPDATE jobs SET status='completed', progress=total, completed_at=NOW() WHERE id=%s",
+            (job_id,),
+        )
+
+
+def job_fail(job_id: int, error: str):
+    with db().cursor() as c:
+        c.execute(
+            "UPDATE jobs SET status='failed', error=%s, completed_at=NOW() WHERE id=%s",
+            (error[:4000], job_id),
+        )
+
 DB_HOST = os.environ.get("DB_HOST", "127.0.0.1")
 DB_USER = os.environ.get("DB_USER", "apexnode")
 DB_PASS = os.environ.get("DB_PASS", "apex_local_dev")
@@ -342,7 +380,7 @@ async def modpack_preview(source: str, ref: str):
 
 @app.post("/api/daemon/modpack/install/{sid}")
 async def modpack_install(sid: int):
-    """Manually trigger modpack install for a server (does not start the process)."""
+    """Synchronous install (kept for tests / small packs)."""
     s = get_server(sid)
     if not s:
         raise HTTPException(404, "server not found")
@@ -354,6 +392,76 @@ async def modpack_install(sid: int):
         return {"ok": True}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/daemon/modpack/install-async/{sid}")
+async def modpack_install_async(sid: int):
+    """Queue a modpack install job and return immediately with a job_id."""
+    s = get_server(sid)
+    if not s:
+        raise HTTPException(404, "server not found")
+    if not s.get("loader_id") or not s.get("modpack_ref"):
+        raise HTTPException(400, "server has no modpack ref configured")
+    if s.get("modpack_status") == "installed":
+        return {"ok": True, "already_installed": True, "job_id": None}
+
+    job_id = create_job("modpack_install", "server", sid, f"Install '{s['modpack_ref']}'")
+    asyncio.create_task(_run_modpack_job(job_id, sid))
+    return {"ok": True, "job_id": job_id}
+
+
+async def _run_modpack_job(job_id: int, sid: int) -> None:
+    """Background task — runs the resolver and updates job + server state."""
+    loop = asyncio.get_event_loop()
+
+    def blocking():
+        server = get_server(sid)
+        if not server or not server.get("loader_id") or not server.get("modpack_ref"):
+            raise pack_resolver.ResolveError("server misconfigured")
+        loader = get_loader(server["loader_id"])
+        if not loader or loader["category"] != "modpack_source":
+            raise pack_resolver.ResolveError("loader is not a modpack source")
+        source = MODPACK_SOURCES.get(loader["slug"])
+        if not source:
+            raise pack_resolver.ResolveError(f"unsupported source: {loader['slug']}")
+        prior = server.get("status", "offline")
+        set_status(sid, "installing")
+        with db().cursor() as c:
+            c.execute("UPDATE servers SET modpack_status='installing' WHERE id=%s", (sid,))
+        wd = STATE_ROOT / "servers" / str(sid)
+        wd.mkdir(parents=True, exist_ok=True)
+        cf_key = get_setting("curseforge_api_key")
+        pack_resolver.install(
+            source, server["modpack_ref"], wd,
+            log=lambda l, lv: log_line(sid, l, lv),
+            cf_api_key=cf_key,
+            progress=lambda done, total, msg: job_progress(job_id, done, total, msg),
+        )
+        with db().cursor() as c:
+            c.execute("UPDATE servers SET modpack_status='installed' WHERE id=%s", (sid,))
+        set_status(sid, prior if prior not in ("installing", "starting") else "offline")
+        log_line(sid, "[modpack] ✓ Ready to boot", "system")
+
+    job_running(job_id)
+    try:
+        await loop.run_in_executor(None, blocking)
+        job_complete(job_id)
+    except Exception as e:
+        with db().cursor() as c:
+            c.execute("UPDATE servers SET modpack_status='failed' WHERE id=%s", (sid,))
+        set_status(sid, "crashed")
+        log_line(sid, f"[modpack] ✗ FAILED: {e}", "error")
+        job_fail(job_id, str(e))
+
+
+@app.get("/api/daemon/jobs/{job_id}")
+async def get_job(job_id: int):
+    with db().cursor() as c:
+        c.execute("SELECT * FROM jobs WHERE id=%s", (job_id,))
+        row = c.fetchone()
+    if not row:
+        raise HTTPException(404, "job not found")
+    return row
 
 
 if __name__ == "__main__":

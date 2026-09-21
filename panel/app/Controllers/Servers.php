@@ -174,18 +174,21 @@ class Servers {
         $s = DB::one('SELECT * FROM servers WHERE id=?', [$id]);
         if (!$s) { \flash('error','Server not found.'); \redirect('/servers'); }
         if (empty($s['modpack_ref'])) { \flash('error','No modpack configured for this server.'); \redirect('/servers/'.$id); }
-        // Fire and forget — the daemon returns after resolve completes (may be minutes for large packs)
-        // We run it via a short-lived curl. For real-world scale you'd background this via a job queue.
-        $ch = curl_init("http://127.0.0.1:8001/api/daemon/modpack/install/$id");
-        curl_setopt_array($ch, [CURLOPT_POST=>true, CURLOPT_RETURNTRANSFER=>true, CURLOPT_TIMEOUT=>600]);
+        // Enqueue on the daemon (returns instantly with job_id)
+        $ch = curl_init("http://127.0.0.1:8001/api/daemon/modpack/install-async/$id");
+        curl_setopt_array($ch, [CURLOPT_POST=>true, CURLOPT_RETURNTRANSFER=>true, CURLOPT_TIMEOUT=>10]);
         $resp = curl_exec($ch);
         $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
         $json = json_decode($resp ?: '{}', true) ?: [];
         if (!empty($json['ok'])) {
-            \flash('success','Modpack installed — check the console for the full log.');
+            if (!empty($json['already_installed'])) {
+                \flash('success','Pack is already installed.');
+            } else {
+                \flash('success','Installation queued (job #'.($json['job_id']??'?').'). Watch progress in the console or on the Jobs page.');
+            }
         } else {
-            \flash('error','Install failed: '.($json['error'] ?? "HTTP $code"));
+            \flash('error','Enqueue failed: '.($json['error'] ?? "HTTP $code"));
         }
         \redirect('/servers/'.$id);
     }

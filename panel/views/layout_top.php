@@ -31,6 +31,7 @@
       <a href="/servers" class="<?= str_starts_with($current, '/servers') ? 'active':'' ?>" data-testid="nav-servers">▶ Servers</a>
       <a href="/eggs" class="<?= str_starts_with($current, '/eggs') ? 'active':'' ?>" data-testid="nav-eggs">◈ Egg Marketplace</a>
       <a href="/mods" class="<?= str_starts_with($current, '/mods') ? 'active':'' ?>" data-testid="nav-mods">⚙ Installations</a>
+      <a href="/jobs" class="<?= str_starts_with($current, '/jobs') ? 'active':'' ?>" data-testid="nav-jobs">◐ Jobs</a>
       <a href="/nodes" class="<?= str_starts_with($current, '/nodes') ? 'active':'' ?>" data-testid="nav-nodes">◉ Nodes</a>
       <a href="/activity" class="<?= str_starts_with($current, '/activity') ? 'active':'' ?>" data-testid="nav-activity">≡ Activity</a>
       <div class="section">Configure</div>

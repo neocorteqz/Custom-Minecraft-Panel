@@ -17,6 +17,10 @@
 </div>
 
 <div class="bento" style="margin-top:16px">
+  <div class="card span-3" id="jobs-panel" data-server-id="<?= (int)$s['id'] ?>" data-testid="server-jobs-panel" style="display:none">
+    <div class="card-title"><h3>◐ Active Jobs</h3><a href="/jobs" class="btn btn-sm">All Jobs →</a></div>
+    <div id="jobs-list"></div>
+  </div>
   <div class="card span-3" id="console-mount" data-server-id="<?= (int)$s['id'] ?>" data-testid="console-panel">
     <div class="card-title"><h3>▶ Live Console</h3><span class="chip accent blink">STREAM</span></div>
     <div class="console">
@@ -67,3 +71,42 @@
     </table>
   </div>
 </div>
+
+<script>
+// Live server-job progress polling
+(function () {
+  const sid = <?= (int)$s['id'] ?>;
+  const panel = document.getElementById('jobs-panel');
+  const list = document.getElementById('jobs-list');
+  async function tick() {
+    try {
+      const r = await fetch(`/json/servers/${sid}/jobs`);
+      if (!r.ok) return;
+      const jobs = await r.json();
+      const active = jobs.filter(j => j.status === 'queued' || j.status === 'running');
+      if (active.length === 0 && !panel.dataset.wasVisible) {
+        panel.style.display = 'none';
+        return;
+      }
+      panel.dataset.wasVisible = '1';
+      panel.style.display = 'block';
+      // Render newest 3
+      list.innerHTML = jobs.slice(0, 3).map(j => {
+        const cls = j.status === 'completed' ? 'online' : j.status === 'failed' ? 'offline' : j.status === 'running' ? 'starting' : 'installing';
+        return `
+          <div style="padding:10px 0;border-bottom:1px solid var(--border-soft)" data-testid="job-card-${j.id}">
+            <div class="between">
+              <div><span class="chip">${j.kind}</span> <span class="mono muted" style="font-size:11px">#${j.id}</span></div>
+              <span class="status status-${cls}" data-testid="server-job-status-${j.id}">${j.status.toUpperCase()}</span>
+            </div>
+            <div class="meter" style="margin-top:8px"><span style="width:${j.pct}%"></span></div>
+            <div class="mono muted" style="font-size:11px;margin-top:4px" data-testid="server-job-message-${j.id}">${j.pct}% — ${escapeHtml(j.message || '')}</div>
+          </div>`;
+      }).join('');
+    } catch (_) {}
+  }
+  function escapeHtml(s){return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+  setInterval(tick, 2000);
+  tick();
+})();
+</script>

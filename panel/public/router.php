@@ -56,9 +56,20 @@ $routes = [
 
     'GET /eggs'                    => ['App\\Controllers\\Eggs', 'index'],
     'GET /mods'                    => ['App\\Controllers\\Mods', 'index'],
+    'GET /jobs'                    => ['App\\Controllers\\Jobs', 'index'],
     'GET /json/loaders'            => ['App\\Controllers\\Mods', 'apiForGame'],
     'GET /json/modpack/preview'    => ['App\\Controllers\\Mods', 'apiPreview'],
 ];
+
+// Jobs API
+if (preg_match('#^/json/jobs/(\d+)$#', $path, $m) && $method === 'GET') {
+    require_once __DIR__ . '/../app/Controllers/Jobs.php';
+    (new App\Controllers\Jobs())->apiShow((int)$m[1]); return true;
+}
+if (preg_match('#^/json/servers/(\d+)/jobs$#', $path, $m) && $method === 'GET') {
+    require_once __DIR__ . '/../app/Controllers/Jobs.php';
+    (new App\Controllers\Jobs())->apiForServer((int)$m[1]); return true;
+}
 
 // Mods dynamic
 if (preg_match('#^/mods/(\d+)$#', $path, $m) && $method === 'GET') {

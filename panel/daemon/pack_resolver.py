@@ -26,6 +26,7 @@ from typing import Callable, Optional
 import requests
 
 LogFn = Callable[[str, str], None]
+ProgressFn = Callable[[int, int, str], None]  # done, total, message
 
 MODRINTH_API = "https://api.modrinth.com/v2"
 CURSEFORGE_API = "https://api.curseforge.com/v1"
@@ -101,8 +102,9 @@ def _extract_overrides(zf: zipfile.ZipFile, work_dir: Path, override_folder: str
     return count
 
 
-def install_modrinth(ref: str, work_dir: Path, log: LogFn) -> dict:
+def install_modrinth(ref: str, work_dir: Path, log: LogFn, progress: ProgressFn | None = None) -> dict:
     log(f"[modpack] Resolving Modrinth pack '{ref}'…", "system")
+    if progress: progress(0, 0, f"Resolving {ref}…")
     proj = requests.get(f"{MODRINTH_API}/project/{ref}", timeout=15)
     if proj.status_code == 404:
         raise ResolveError(f"Modrinth project '{ref}' not found")
@@ -118,16 +120,18 @@ def install_modrinth(ref: str, work_dir: Path, log: LogFn) -> dict:
     mods_dir = work_dir / "mods"
     mods_dir.mkdir(exist_ok=True)
     pack_path = work_dir / primary["filename"]
+    if progress: progress(0, 1, f"Downloading pack {primary['filename']}")
     _download_stream(primary["url"], pack_path, log, f"pack {primary['filename']}")
 
     with zipfile.ZipFile(pack_path) as zf:
-        # Modrinth uses modrinth.index.json
         try:
             idx = json.loads(zf.read("modrinth.index.json").decode("utf-8"))
         except KeyError:
             raise ResolveError("pack is missing modrinth.index.json")
         files = idx.get("files", [])
+        total = len(files) + 1  # +1 for overrides step
         log(f"[modpack] Manifest lists {len(files)} files — downloading…", "system")
+        if progress: progress(0, total, f"{len(files)} files to fetch")
         for i, f in enumerate(files, 1):
             downloads = f.get("downloads") or []
             path = f["path"]
@@ -137,7 +141,10 @@ def install_modrinth(ref: str, work_dir: Path, log: LogFn) -> dict:
                     _download_stream(downloads[0], target, log, f"{i}/{len(files)} {path}")
                 except Exception as e:
                     log(f"[modpack] ! failed {path}: {e}", "warn")
+            if progress: progress(i, total, f"{i}/{len(files)} {path}")
+        if progress: progress(total - 1, total, "Extracting overrides…")
         _extract_overrides(zf, work_dir, "overrides", log)
+        if progress: progress(total, total, "Done")
     pack_path.unlink(missing_ok=True)
     log(f"[modpack] ✓ Modrinth pack installed", "system")
     return {"source": "modrinth", "version": v["version_number"], "files": len(files)}
@@ -205,16 +212,18 @@ def _cf_download_url(mod_id: int, file_id: int, api_key: str) -> str:
     return f"https://mediafilez.forgecdn.net/files/{int(s[:4])}/{int(s[4:])}/{fname}"
 
 
-def install_curseforge(ref: str, work_dir: Path, log: LogFn, api_key: str) -> dict:
+def install_curseforge(ref: str, work_dir: Path, log: LogFn, api_key: str, progress: ProgressFn | None = None) -> dict:
     if not api_key:
         raise ResolveError("CurseForge API key not configured")
     log(f"[modpack] Resolving CurseForge pack '{ref}'…", "system")
+    if progress: progress(0, 0, f"Resolving {ref}…")
     preview = curseforge_preview(ref, api_key)
     if not preview["latest_file_id"]:
         raise ResolveError("no files available for this pack")
     mod_id = preview["id"]
     file_id = preview["latest_file_id"]
     log(f"[modpack] Found '{preview['title']}' ({preview['latest_file_name']})", "system")
+    if progress: progress(0, 1, f"Downloading pack {preview['latest_file_name']}")
     dl_url = _cf_download_url(mod_id, file_id, api_key)
     pack_path = work_dir / preview["latest_file_name"]
     _download_stream(dl_url, pack_path, log, f"pack {preview['latest_file_name']}")
@@ -226,19 +235,23 @@ def install_curseforge(ref: str, work_dir: Path, log: LogFn, api_key: str) -> di
             raise ResolveError("pack missing manifest.json")
         mods = manifest.get("files", [])
         override_folder = manifest.get("overrides", "overrides")
+        total = len(mods) + 1
         log(f"[modpack] Manifest: {len(mods)} mods, MC {manifest.get('minecraft',{}).get('version','?')}", "system")
+        if progress: progress(0, total, f"{len(mods)} mods to fetch")
         mods_dir = work_dir / "mods"
         mods_dir.mkdir(exist_ok=True)
         for i, m in enumerate(mods, 1):
             pid, fid = m["projectID"], m["fileID"]
             try:
                 url = _cf_download_url(pid, fid, api_key)
-                # Grab filename from URL
                 fname = url.split("/")[-1] or f"{pid}-{fid}.jar"
                 _download_stream(url, mods_dir / fname, log, f"mod {i}/{len(mods)} {fname}")
             except Exception as e:
                 log(f"[modpack] ! failed mod {pid}/{fid}: {e}", "warn")
+            if progress: progress(i, total, f"{i}/{len(mods)} mods")
+        if progress: progress(total - 1, total, "Extracting overrides…")
         _extract_overrides(zf, work_dir, override_folder, log)
+        if progress: progress(total, total, "Done")
     pack_path.unlink(missing_ok=True)
     log(f"[modpack] ✓ CurseForge pack installed", "system")
     return {"source": "curseforge", "files": len(mods)}
@@ -246,11 +259,12 @@ def install_curseforge(ref: str, work_dir: Path, log: LogFn, api_key: str) -> di
 
 # ---------------- Dispatcher ----------------
 
-def install(source: str, ref: str, work_dir: Path, log: LogFn, cf_api_key: str = "") -> dict:
+def install(source: str, ref: str, work_dir: Path, log: LogFn, cf_api_key: str = "",
+            progress: ProgressFn | None = None) -> dict:
     if source == "modrinth":
-        return install_modrinth(ref, work_dir, log)
+        return install_modrinth(ref, work_dir, log, progress=progress)
     if source == "curseforge":
-        return install_curseforge(ref, work_dir, log, cf_api_key)
+        return install_curseforge(ref, work_dir, log, cf_api_key, progress=progress)
     raise ResolveError(f"unknown source: {source}")
 
 

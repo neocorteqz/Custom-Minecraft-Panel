@@ -101,12 +101,20 @@
       panel.dataset.wasVisible = '1';
       panel.style.display = 'block';
       list.innerHTML = jobs.slice(0, 3).map(j => {
-        const cls = j.status === 'completed' ? 'online' : j.status === 'failed' ? 'offline' : j.status === 'running' ? 'starting' : 'installing';
+        const cls = j.status === 'completed' ? 'online' : j.status === 'failed' || j.status === 'cancelled' ? 'offline' : j.status === 'running' ? 'starting' : 'installing';
+        const cancelBtn = (j.status === 'queued' || j.status === 'running')
+          ? `<form method="post" action="/jobs/${j.id}/cancel" data-confirm="Cancel this job?" style="margin:0">
+               <input type="hidden" name="_csrf" value="${document.querySelector('meta[name=csrf]').content}">
+               <button class="btn btn-sm btn-danger" data-testid="cancel-server-job-${j.id}">✕ Cancel</button>
+             </form>` : '';
         return `
           <div style="padding:10px 0;border-bottom:1px solid var(--border-soft)" data-testid="job-card-${j.id}">
             <div class="between">
               <div><span class="chip">${j.kind}</span> <span class="mono muted" style="font-size:11px">#${j.id}</span></div>
-              <span class="status status-${cls}" data-testid="server-job-status-${j.id}">${j.status.toUpperCase()}</span>
+              <div class="row" style="gap:6px;align-items:center">
+                <span class="status status-${cls}" data-testid="server-job-status-${j.id}">${j.status.toUpperCase()}${j.cancel_requested==1 && j.status==='running' ? ' (cancelling…)' : ''}</span>
+                ${cancelBtn}
+              </div>
             </div>
             <div class="meter" style="margin-top:8px"><span style="width:${j.pct}%"></span></div>
             <div class="mono muted" style="font-size:11px;margin-top:4px" data-testid="server-job-message-${j.id}">${j.pct}% — ${escapeHtml(j.message || '')}</div>

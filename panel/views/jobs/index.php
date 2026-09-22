@@ -8,7 +8,7 @@
 
 <div class="card" style="margin-top:14px">
   <table class="table" data-testid="jobs-table">
-    <thead><tr><th>#</th><th>Kind</th><th>Server</th><th>Status</th><th>Progress</th><th>Message</th><th>When</th></tr></thead>
+    <thead><tr><th>#</th><th>Kind</th><th>Server</th><th>Status</th><th>Progress</th><th>Message</th><th>When</th><th></th></tr></thead>
     <tbody>
     <?php foreach ($jobs as $j):
       $pct = $j['total'] > 0 ? min(100, (int)round(100 * $j['progress'] / $j['total'])) : 0;
@@ -25,10 +25,18 @@
         </td>
         <td class="mono muted" style="font-size:11px"><?= h($j['message'] ?: ($j['error'] ?: '')) ?></td>
         <td class="mono muted" style="font-size:11px"><?= h($j['created_at']) ?></td>
+        <td>
+          <?php if (in_array($j['status'], ['queued','running'])): ?>
+            <form method="post" action="/jobs/<?= (int)$j['id'] ?>/cancel" data-confirm="Cancel this job?" style="margin:0">
+              <?= csrf_field() ?>
+              <button class="btn btn-sm btn-danger" data-testid="cancel-job-<?= (int)$j['id'] ?>">✕ Cancel</button>
+            </form>
+          <?php endif; ?>
+        </td>
       </tr>
     <?php endforeach; ?>
     <?php if (empty($jobs)): ?>
-      <tr><td colspan="7" class="muted" style="text-align:center;padding:30px" data-testid="empty-jobs">No jobs yet. Trigger a modpack install to see one appear.</td></tr>
+      <tr><td colspan="8" class="muted" style="text-align:center;padding:30px" data-testid="empty-jobs">No jobs yet. Trigger a modpack install to see one appear.</td></tr>
     <?php endif; ?>
     </tbody>
   </table>

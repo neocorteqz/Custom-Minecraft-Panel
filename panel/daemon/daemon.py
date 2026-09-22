@@ -26,6 +26,11 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 import pack_resolver
+import runtime as loader_runtime
+
+
+# ---- job cancellation registry ----
+_cancel_tokens: Dict[int, pack_resolver.CancelToken] = {}
 
 
 def _job_exec(sql: str, args: tuple = (), *, lastrowid: bool = False):
@@ -251,18 +256,14 @@ async def stream_output(sid: int, stream, level: str = "info"):
 
 
 def build_start_cmd(server, egg) -> str:
-    """Compose the actual command to run inside the working directory."""
-    if egg and egg.get("start_command"):
-        cmd_tpl = egg["start_command"]
-    else:
-        cmd_tpl = "python3 -u /app/panel/daemon/fake_game.py {game}"
-    return cmd_tpl.format(
-        game=server["game"],
-        port=server["port"],
-        name=server["name"],
-        ram=server["ram_mb"],
-        players=server["players_max"],
-    )
+    """Delegate to runtime.py which knows how to spin up Paper/Purpur/Fabric etc.
+    For non-Java games or unknown combos, runtime.py returns the fake_game.py fallback."""
+    loader = get_loader(server.get("loader_id"))
+    try:
+        return loader_runtime.resolve(server, loader, lambda l, lv: log_line(server["id"], l, lv))
+    except Exception as e:
+        log_line(server["id"], f"[runtime] bootstrap failed ({e}); falling back to fake game", "warn")
+        return f"python3 -u /app/panel/daemon/fake_game.py {server['game']}"
 
 
 class ConsoleIn(BaseModel):
@@ -420,7 +421,9 @@ async def modpack_install(sid: int):
 
 @app.post("/api/daemon/modpack/install-async/{sid}")
 async def modpack_install_async(sid: int):
-    """Queue a modpack install job and return immediately with a job_id."""
+    """Queue a modpack install job and return immediately with a job_id.
+    Concurrency guard: if an install is already queued or running for this server,
+    return the existing job_id with `already_running=true` instead of enqueuing again."""
     s = get_server(sid)
     if not s:
         raise HTTPException(404, "server not found")
@@ -429,14 +432,53 @@ async def modpack_install_async(sid: int):
     if s.get("modpack_status") == "installed":
         return {"ok": True, "already_installed": True, "job_id": None}
 
+    # Concurrency guard — one modpack install per server at a time
+    conn = db()
+    try:
+        with conn.cursor() as c:
+            c.execute(
+                "SELECT id, status FROM jobs WHERE kind='modpack_install' AND target_kind='server' "
+                "AND target_id=%s AND status IN ('queued','running') ORDER BY id DESC LIMIT 1",
+                (sid,),
+            )
+            existing = c.fetchone()
+    finally:
+        conn.close()
+    if existing:
+        return {"ok": True, "already_running": True, "job_id": existing["id"], "status": existing["status"]}
+
     job_id = create_job("modpack_install", "server", sid, f"Install '{s['modpack_ref']}'")
     asyncio.create_task(_run_modpack_job(job_id, sid))
     return {"ok": True, "job_id": job_id}
 
 
+@app.post("/api/daemon/jobs/{job_id}/cancel")
+async def cancel_job(job_id: int):
+    """Cooperative cancellation — flips the DB flag and signals the in-flight resolver."""
+    conn = db()
+    try:
+        with conn.cursor() as c:
+            c.execute("SELECT status, cancel_requested FROM jobs WHERE id=%s", (job_id,))
+            row = c.fetchone()
+            if not row:
+                raise HTTPException(404, "job not found")
+            if row["status"] in ("completed", "failed", "cancelled"):
+                return {"ok": True, "already_finished": True, "status": row["status"]}
+            c.execute("UPDATE jobs SET cancel_requested=1, message=CONCAT('cancel-requested · ', COALESCE(message,'')) WHERE id=%s", (job_id,))
+    finally:
+        conn.close()
+    token = _cancel_tokens.get(job_id)
+    if token:
+        token.set()
+    return {"ok": True, "cancelled": True}
+
+
 async def _run_modpack_job(job_id: int, sid: int) -> None:
-    """Background task — runs the resolver and updates job + server state."""
+    """Background task — runs the resolver and updates job + server state.
+    Registers a CancelToken so `POST /jobs/{id}/cancel` can signal the running resolver."""
     loop = asyncio.get_event_loop()
+    token = pack_resolver.CancelToken()
+    _cancel_tokens[job_id] = token
 
     def blocking():
         server = get_server(sid)
@@ -459,6 +501,7 @@ async def _run_modpack_job(job_id: int, sid: int) -> None:
             log=lambda l, lv: log_line(sid, l, lv),
             cf_api_key=cf_key,
             progress=lambda done, total, msg: job_progress(job_id, done, total, msg),
+            cancel=token,
         )
         _job_exec("UPDATE servers SET modpack_status='installed' WHERE id=%s", (sid,))
         set_status(sid, prior if prior not in ("installing", "starting") else "offline")
@@ -468,11 +511,19 @@ async def _run_modpack_job(job_id: int, sid: int) -> None:
     try:
         await loop.run_in_executor(None, blocking)
         job_complete(job_id)
+    except pack_resolver.Cancelled as e:
+        _job_exec("UPDATE servers SET modpack_status='none' WHERE id=%s", (sid,))
+        set_status(sid, "offline")
+        log_line(sid, "[modpack] ✗ cancelled by operator", "warn")
+        _job_exec("UPDATE jobs SET status='cancelled', completed_at=NOW(), message=%s WHERE id=%s",
+                  (f"cancelled: {e}", job_id))
     except Exception as e:
         _job_exec("UPDATE servers SET modpack_status='failed' WHERE id=%s", (sid,))
         set_status(sid, "crashed")
         log_line(sid, f"[modpack] ✗ FAILED: {e}", "error")
         job_fail(job_id, str(e))
+    finally:
+        _cancel_tokens.pop(job_id, None)
 
 
 @app.get("/api/daemon/jobs/{job_id}")

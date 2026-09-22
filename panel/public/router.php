@@ -66,6 +66,10 @@ if (preg_match('#^/json/jobs/(\d+)$#', $path, $m) && $method === 'GET') {
     require_once __DIR__ . '/../app/Controllers/Jobs.php';
     (new App\Controllers\Jobs())->apiShow((int)$m[1]); return true;
 }
+if (preg_match('#^/jobs/(\d+)/cancel$#', $path, $m) && $method === 'POST') {
+    require_once __DIR__ . '/../app/Controllers/Jobs.php';
+    (new App\Controllers\Jobs())->cancel((int)$m[1]); return true;
+}
 if (preg_match('#^/json/servers/(\d+)/jobs$#', $path, $m) && $method === 'GET') {
     require_once __DIR__ . '/../app/Controllers/Jobs.php';
     (new App\Controllers\Jobs())->apiForServer((int)$m[1]); return true;

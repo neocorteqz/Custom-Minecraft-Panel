@@ -28,6 +28,24 @@ import requests
 LogFn = Callable[[str, str], None]
 ProgressFn = Callable[[int, int, str], None]  # done, total, message
 
+
+class Cancelled(Exception):
+    pass
+
+
+class CancelToken:
+    """Thread-safe cancel signal. Resolver polls .check() between files/downloads."""
+    def __init__(self):
+        self._flag = False
+    def set(self):
+        self._flag = True
+    def is_set(self) -> bool:
+        return self._flag
+    def check(self):
+        if self._flag:
+            raise Cancelled("job cancelled by operator")
+
+
 MODRINTH_API = "https://api.modrinth.com/v2"
 CURSEFORGE_API = "https://api.curseforge.com/v1"
 CFWIDGET_API = "https://api.cfwidget.com"  # public slug→id resolver
@@ -63,13 +81,15 @@ def modrinth_preview(ref: str) -> dict:
     }
 
 
-def _download_stream(url: str, dst: Path, log: LogFn, label: str, headers: dict | None = None):
+def _download_stream(url: str, dst: Path, log: LogFn, label: str,
+                     headers: dict | None = None, cancel: CancelToken | None = None):
     log(f"[modpack] ⬇ {label}", "info")
     with requests.get(url, stream=True, timeout=60, headers=headers or {}) as r:
         r.raise_for_status()
         dst.parent.mkdir(parents=True, exist_ok=True)
         with open(dst, "wb") as f:
             for chunk in r.iter_content(chunk_size=1 << 16):
+                if cancel: cancel.check()
                 if chunk:
                     f.write(chunk)
 
@@ -102,9 +122,11 @@ def _extract_overrides(zf: zipfile.ZipFile, work_dir: Path, override_folder: str
     return count
 
 
-def install_modrinth(ref: str, work_dir: Path, log: LogFn, progress: ProgressFn | None = None) -> dict:
+def install_modrinth(ref: str, work_dir: Path, log: LogFn, progress: ProgressFn | None = None,
+                     cancel: CancelToken | None = None) -> dict:
     log(f"[modpack] Resolving Modrinth pack '{ref}'…", "system")
     if progress: progress(0, 0, f"Resolving {ref}…")
+    if cancel: cancel.check()
     proj = requests.get(f"{MODRINTH_API}/project/{ref}", timeout=15)
     if proj.status_code == 404:
         raise ResolveError(f"Modrinth project '{ref}' not found")
@@ -121,7 +143,7 @@ def install_modrinth(ref: str, work_dir: Path, log: LogFn, progress: ProgressFn 
     mods_dir.mkdir(exist_ok=True)
     pack_path = work_dir / primary["filename"]
     if progress: progress(0, 1, f"Downloading pack {primary['filename']}")
-    _download_stream(primary["url"], pack_path, log, f"pack {primary['filename']}")
+    _download_stream(primary["url"], pack_path, log, f"pack {primary['filename']}", cancel=cancel)
 
     with zipfile.ZipFile(pack_path) as zf:
         try:
@@ -129,16 +151,19 @@ def install_modrinth(ref: str, work_dir: Path, log: LogFn, progress: ProgressFn 
         except KeyError:
             raise ResolveError("pack is missing modrinth.index.json")
         files = idx.get("files", [])
-        total = len(files) + 1  # +1 for overrides step
+        total = len(files) + 1
         log(f"[modpack] Manifest lists {len(files)} files — downloading…", "system")
         if progress: progress(0, total, f"{len(files)} files to fetch")
         for i, f in enumerate(files, 1):
+            if cancel: cancel.check()
             downloads = f.get("downloads") or []
             path = f["path"]
             target = work_dir / path
             if downloads:
                 try:
-                    _download_stream(downloads[0], target, log, f"{i}/{len(files)} {path}")
+                    _download_stream(downloads[0], target, log, f"{i}/{len(files)} {path}", cancel=cancel)
+                except Cancelled:
+                    raise
                 except Exception as e:
                     log(f"[modpack] ! failed {path}: {e}", "warn")
             if progress: progress(i, total, f"{i}/{len(files)} {path}")
@@ -212,11 +237,13 @@ def _cf_download_url(mod_id: int, file_id: int, api_key: str) -> str:
     return f"https://mediafilez.forgecdn.net/files/{int(s[:4])}/{int(s[4:])}/{fname}"
 
 
-def install_curseforge(ref: str, work_dir: Path, log: LogFn, api_key: str, progress: ProgressFn | None = None) -> dict:
+def install_curseforge(ref: str, work_dir: Path, log: LogFn, api_key: str,
+                       progress: ProgressFn | None = None, cancel: CancelToken | None = None) -> dict:
     if not api_key:
         raise ResolveError("CurseForge API key not configured")
     log(f"[modpack] Resolving CurseForge pack '{ref}'…", "system")
     if progress: progress(0, 0, f"Resolving {ref}…")
+    if cancel: cancel.check()
     preview = curseforge_preview(ref, api_key)
     if not preview["latest_file_id"]:
         raise ResolveError("no files available for this pack")
@@ -226,7 +253,7 @@ def install_curseforge(ref: str, work_dir: Path, log: LogFn, api_key: str, progr
     if progress: progress(0, 1, f"Downloading pack {preview['latest_file_name']}")
     dl_url = _cf_download_url(mod_id, file_id, api_key)
     pack_path = work_dir / preview["latest_file_name"]
-    _download_stream(dl_url, pack_path, log, f"pack {preview['latest_file_name']}")
+    _download_stream(dl_url, pack_path, log, f"pack {preview['latest_file_name']}", cancel=cancel)
 
     with zipfile.ZipFile(pack_path) as zf:
         try:
@@ -241,11 +268,14 @@ def install_curseforge(ref: str, work_dir: Path, log: LogFn, api_key: str, progr
         mods_dir = work_dir / "mods"
         mods_dir.mkdir(exist_ok=True)
         for i, m in enumerate(mods, 1):
+            if cancel: cancel.check()
             pid, fid = m["projectID"], m["fileID"]
             try:
                 url = _cf_download_url(pid, fid, api_key)
                 fname = url.split("/")[-1] or f"{pid}-{fid}.jar"
-                _download_stream(url, mods_dir / fname, log, f"mod {i}/{len(mods)} {fname}")
+                _download_stream(url, mods_dir / fname, log, f"mod {i}/{len(mods)} {fname}", cancel=cancel)
+            except Cancelled:
+                raise
             except Exception as e:
                 log(f"[modpack] ! failed mod {pid}/{fid}: {e}", "warn")
             if progress: progress(i, total, f"{i}/{len(mods)} mods")
@@ -260,11 +290,11 @@ def install_curseforge(ref: str, work_dir: Path, log: LogFn, api_key: str, progr
 # ---------------- Dispatcher ----------------
 
 def install(source: str, ref: str, work_dir: Path, log: LogFn, cf_api_key: str = "",
-            progress: ProgressFn | None = None) -> dict:
+            progress: ProgressFn | None = None, cancel: CancelToken | None = None) -> dict:
     if source == "modrinth":
-        return install_modrinth(ref, work_dir, log, progress=progress)
+        return install_modrinth(ref, work_dir, log, progress=progress, cancel=cancel)
     if source == "curseforge":
-        return install_curseforge(ref, work_dir, log, cf_api_key, progress=progress)
+        return install_curseforge(ref, work_dir, log, cf_api_key, progress=progress, cancel=cancel)
     raise ResolveError(f"unknown source: {source}")
 
 

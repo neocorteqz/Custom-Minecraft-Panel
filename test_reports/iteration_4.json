@@ -1,0 +1,37 @@
+{
+  "summary": "Iteration 4 — Background Job Queue verified end-to-end. All 13 backend pytest tests pass in ~15s and a Playwright live-progress test passes against the preview URL. Covered: enqueue latency (<3s redirect — measured ~570ms in Playwright, ~1-2s in requests), jobs row created with kind='modpack_install', GET /json/jobs/{id} returns all required fields (id, kind, target_id, target_kind, status, progress, total, pct 0..100, message) and reaches status='completed' pct=100 within 90s, GET /json/servers/{sid}/jobs returns JSON array with newest job first including pct, post-install DB state (status='offline' modpack_status='installed') + >=5 .jar files on disk (11 for adrenaserver), /jobs page renders server name and has data-testid=jobs-table, /dashboard sidebar has data-testid=nav-jobs, idempotent enqueue on installed server produces NO new job row (before==after), failure path with bogus modpack ref reaches status='failed' with non-empty error, server row becomes status='crashed' modpack_status='failed' and server_logs contains '[modpack] ✗ FAILED'. Regression: /json/modpack/preview OK for Modrinth (fabulously-optimized) and CurseForge (all-the-mods-9); /dashboard, /servers, /servers/1, /mods, /eggs all 200; existing server id 17 still 'installed'. Playwright: logged in as admin/admin123, deployed PWQueue_{ts} (sid=20 in this run), navigated to /servers/20, verified data-testid=server-jobs-panel present in HTML, POSTed install form (~570ms), within 15s job-card-4 became visible with status RUNNING, and within 90s status pill transitioned to COMPLETED with a full progress bar and 11 [modpack] download lines streamed to the console.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Server detail — pack status", "issue": "After the background job completes, the 'Pack status' row in the Configuration table still shows PENDING and continues to render the '⬇ Install pack now' button until the page is reloaded. The Active Jobs panel polls /json/servers/{id}/jobs every 2s and updates correctly, but the modpack_status pill (data-testid=modpack-status) and its inline install form are rendered from PHP once and never refreshed. Minor UX bug — clicking the still-visible 'Install pack now' button after completion just triggers the idempotent-enqueue path and flashes 'Pack is already installed.' but it is confusing.", "affected_selectors": ["[data-testid=modpack-status]", "[data-testid=btn-install-pack]"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration4_jobs.py",
+    "/app/test_reports/pytest/iteration4_results.xml"
+  ],
+  "action_items": [
+    "(Nice-to-have) After the /json/servers/{id}/jobs poller sees a job complete, refresh the modpack-status pill and hide the 'Install pack now' button — either by re-fetching a fragment or by adding /json/servers/{id} state and updating the pill client-side."
+  ],
+  "critical_code_review_comments": [
+    "daemon.create_job/job_progress/job_complete/job_fail each open a fresh pymysql connection per call (via db()) and never close it. During a real install with N files the resolver calls progress N times → N leaked connections. Wrap each helper in `with db() as conn:` or reuse a pooled connection, otherwise MySQL max_connections will be exhausted under load.",
+    "log_line() has the same connection-leak pattern — every log line opens a new autocommit connection and relies on GC to close it. Under a stream_output flood this compounds the issue above.",
+    "_run_modpack_job catches Exception and calls set_status(sid,'crashed') unconditionally, but if the failure happens before set_status('installing') was reached (e.g. get_server returns None or loader lookup fails), the server may already be in a valid state like 'offline' — clobbering it to 'crashed' is wrong. Guard with the same prior_status snapshot pattern the sync path uses.",
+    "Jobs::apiShow returns the raw `payload` JSON column and any future sensitive fields verbatim. Consider whitelisting the fields you cast+expose (already done for progress/total/pct) rather than passing $j through wholesale.",
+    "views/jobs/index.php live-refresh loop only updates status pill, meter width, and progress text; it never updates the 'When' column or removes/appends new rows. If a new job is enqueued while /jobs is open the user sees a stale list until manual reload. Consider re-fetching the list, not per-row poll.",
+    "Idempotency check in modpack_install_async only checks modpack_status='installed' — it does not guard against a concurrent running/queued job for the same sid. Two rapid clicks (or two tabs) will create two overlapping jobs racing on the same work_dir. Add a `SELECT 1 FROM jobs WHERE target_id=%s AND target_kind='server' AND status IN ('queued','running') AND kind='modpack_install' FOR UPDATE` check.",
+    "installPack (PHP) uses a 10s cURL timeout — that's fine for enqueue, but if the daemon is momentarily slow (>10s) the user gets 'Enqueue failed: HTTP 0' and no job row exists yet. Consider 15-20s to be safe.",
+    "server-jobs-panel does `panel.dataset.wasVisible = '1'` after the first active job is seen and never clears it, so the panel remains visible forever showing the completed job even after the user navigates away and back (well — it's per-page so actually fine on reload). Minor.",
+    "jobs schema uses `INDEX idx_status (status, created_at)` — good. Consider adding `INDEX idx_active_for_target (target_kind, target_id, status)` to make the concurrency-guard query above cheap."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration4_jobs.py (new)"],
+  "success_rate": {"backend": "100% (13/13)", "frontend": "100% (Playwright end-to-end: nav-jobs visible, panel present, RUNNING → COMPLETED within 90s)"},
+  "test_credentials": "admin / admin123",
+  "seed_data_creation": "Created 3 servers during the run: QueueLatencyTest_{ts} (Modrinth adrenaserver, installed, 11 jars), PWQueue_{ts} (sid=20, Modrinth adrenaserver, installed via Playwright), QueueFailTest_{ts} (crashed/failed). All picked ports via MAX(port)+1.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "New test file at /app/backend/tests/test_iteration4_jobs.py runs in ~15s and does two real Modrinth downloads (adrenaserver ~11 jars) plus one failure-path resolve. It relies on server id 17 existing with modpack_status='installed' for one regression assertion (guarded — skipped if row missing). Playwright login: fill admin/admin123 then press Enter in the password field (there is no button[type=submit], the button text is 'Enter Command Tower →'). CSRF token is present as both a hidden input[name=_csrf] AND meta[name=csrf] on all authenticated pages — use the meta selector when the input is inside forms with duplicates.",
+  "rca of the issue": "N/A — no bugs found in iteration 4 scope. One minor UX gap noted (modpack_status pill on server detail page does not live-refresh after job completes) plus several code-review comments for concurrency and connection-hygiene follow-ups."
+}

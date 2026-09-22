@@ -234,8 +234,10 @@ Restart=always
 WantedBy=multi-user.target
 UNIT
 
-pip3 install --quiet -r "${APEX_DIR}/daemon/requirements.txt" || true
-pip3 install --quiet -r "${APEX_DIR}/discord-bot/requirements.txt" || true
+pip3 install --quiet -r "${APEX_DIR}/daemon/requirements.txt"
+pip3 install --quiet -r "${APEX_DIR}/discord-bot/requirements.txt"
+
+systemctl reload php*-fpm 2>/dev/null || true
 
 systemctl daemon-reload
 systemctl enable --now apex-daemon apex-backup

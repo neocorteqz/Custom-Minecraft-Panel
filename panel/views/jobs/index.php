@@ -54,12 +54,19 @@ setInterval(async () => {
       const pill = row.querySelector('[data-testid=job-status-' + id + ']');
       if (pill) {
         pill.textContent = j.status.toUpperCase();
-        pill.className = 'status status-' + (j.status === 'completed' ? 'online' : j.status === 'failed' ? 'offline' : j.status === 'running' ? 'starting' : 'installing');
+        pill.className = 'status status-' + (j.status === 'completed' ? 'online' : (j.status === 'failed' || j.status === 'cancelled') ? 'offline' : j.status === 'running' ? 'starting' : 'installing');
       }
       const meter = row.querySelector('.meter > span');
       if (meter) meter.style.width = j.pct + '%';
       const prog = row.querySelector('[data-testid=job-progress-' + id + ']');
       if (prog) prog.textContent = j.progress + '/' + j.total + ' · ' + j.pct + '%';
+      // Hide the cancel button once the job reaches a terminal state
+      const isTerminal = ['completed','failed','cancelled'].includes(j.status);
+      const cancelForm = row.querySelector('[data-testid=cancel-job-' + id + ']');
+      if (cancelForm && isTerminal) {
+        const cell = cancelForm.closest('td');
+        if (cell) cell.innerHTML = '';
+      }
     } catch (_) {}
   });
 }, 2000);

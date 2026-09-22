@@ -1,49 +1,44 @@
 # ApexNode — Game Server Control Panel
 
-**Original problem statement**: Build a PHP-based game server installer panel (Pterodactyl / MCSManager style) with database integration, theme customizer, mobile app integration, Discord bot, installable on Linux.
+**Original problem statement**: PHP-based game server installer panel (Pterodactyl / MCSManager style) with DB, theme customizer, mobile app integration, Discord bot, installable on Linux.
 
-## User choices & subsequent requests
-- PHP + MariaDB + Redis panel; Minecraft Java/Bedrock, CS2, Rust; Discord bot with status + start/stop/restart; PWA mobile shell.
-- Iter 2 additions: File Manager, Real Daemon Bridge, Egg Marketplace, Scheduled Backups, Server Installation chooser.
-- Iter 3 (current): **Live Modpack Resolver** — real Modrinth + CurseForge integration. User supplied a CurseForge Core API key (stored in `settings.curseforge_api_key`).
+## User choices
+- PHP + MariaDB + Redis; Minecraft Java/Bedrock, CS2, Rust
+- Discord bot: status + start/stop/restart; PWA mobile shell
+- Later iterations: File Manager, Real Daemon Bridge, Egg Marketplace, Scheduled Backups, Server Installation chooser, Live Modpack Resolver (Modrinth + CurseForge), **Background Job Queue** (this iteration)
 
 ## Architecture
-- PHP 8.2 panel on port 3000 (supervisor `php-panel`)
-- MariaDB 10.11 (`apexnode / apex_local_dev`)
-- Redis 7
-- `apex-daemon` — FastAPI/uvicorn on 127.0.0.1:8001 — real process manager + modpack resolver
-- `apex-backup` — PHP CLI backup runner
-- Python discord.py bot
+- PHP 8.2 panel on port 3000 (supervisor `php-panel`, PHP built-in server)
+- MariaDB 10.11 (`apexnode / apex_local_dev`), Redis 7
+- `apex-daemon` FastAPI on 127.0.0.1:8001 — real process manager + modpack resolver + job queue
+- `apex-backup` PHP CLI backup runner
+- Python discord.py bot (`apexnode-bot`)
 
-## Modpack Resolver (this iteration)
-- **Modrinth**: public v2 API, no key. Resolves slug → project → latest version → downloads primary `.mrpack`, parses `modrinth.index.json`, downloads all listed files, extracts `overrides/` into server root.
-- **CurseForge**: authenticated v1 API using the user-supplied key. Because that key's `/mods/search` scope returns 403, the resolver falls back to public `api.cfwidget.com` **only for slug → numeric ID resolution**. Every subsequent call (`/mods/{id}`, `/mods/{id}/files`, `/mods/{id}/files/{fid}/download-url`, actual downloads from CurseForge CDN) uses the real key. FTB packs route through the CurseForge path since FTB hosts on CurseForge.
-- Resolver triggers on daemon `start/{id}` for pending servers, plus a manual `POST /servers/{id}/modpack/install` button on the server detail page.
-- Live preview endpoint `/json/modpack/preview?source=…&ref=…` powers instant validation in the deploy wizard.
-- Path safety: ZIP override extraction rejects `..` components and enforces `target.resolve().relative_to(work_root)` (fixed in iter 3).
-- Status flow: `pending → installing → installed` (or `failed` on error). Server operational status is snapshotted before install and restored after success; on failure it becomes `crashed` (fixed in iter 3).
+## Job Queue (this iteration)
+- `jobs` table: `id, kind, target_kind, target_id, status(queued/running/completed/failed/cancelled), progress, total, message, error, payload, timestamps`
+- Daemon endpoints: `POST /api/daemon/modpack/install-async/{sid}` (queues + returns `{ok, job_id}` in <1s), `GET /api/daemon/jobs/{id}`, plus the legacy synchronous install endpoint kept for regression tests
+- Background worker: `asyncio.create_task(_run_modpack_job)` runs the resolver off the request path; `pack_resolver.install()` accepts a `progress(done, total, message)` callback that updates the job row in real time
+- Panel: `/jobs` list page (auto-refresh 2s), `/json/jobs/{id}` and `/json/servers/{sid}/jobs` polling endpoints, live progress panel on server detail page (data-testid `server-jobs-panel`) that auto-reloads the page once a modpack install completes so the "Pack status" pill picks up the new state without manual refresh
+- Idempotency: install-async short-circuits with `already_installed=true` for servers whose `modpack_status='installed'`
+- Failure path: sets `jobs.status='failed'` with `error`, `servers.status='crashed'`, `servers.modpack_status='failed'`, log line `[modpack] ✗ FAILED`
+- Connection hygiene: `_job_exec()` helper wraps every daemon-side write in `try/finally: conn.close()` so long installs no longer leak MySQL connections per progress tick
 
-## Implemented (Jan 2026)
-- Auth (bcrypt, roles), CSRF, first-run admin bootstrap
-- Dashboard, Servers CRUD, Server Detail with real daemon start/stop/restart/kill, live console (stdout + stdin), Nodes, Users, Theme customizer (dynamic `/theme.css`), Discord bot page, Activity log, Install docs + scripts
-- **File Manager** at `/servers/{id}/files` (sandboxed under `/var/lib/apexnode/servers/{id}`)
-- **Egg Marketplace**: 9 templates
-- **Server Installation chooser (`/mods`)**: 20 loaders — Vanilla, Paper, Purpur, Forge, NeoForge, Fabric, Quilt, CurseForge, Modrinth, FTB, PocketMine, Metamod:Source, CounterStrikeSharp, MatchZy, Workshop, Oxide, Carbon
-- **Scheduled Backups**: interval, retention, local + S3-compatible (Backblaze/Wasabi), manual "Backup Now", one-click restore, download
-- **Modpack Resolver**: Modrinth + CurseForge live preview and real download
+## Iteration test outcomes
+- Iter 1 (v1 features): 34/34 backend
+- Iter 2 (Modpack Resolver): 14/14 backend + Playwright live preview
+- Iter 3 (bug fixes): 8/8 (status-stuck-installing, ZIP path traversal both closed)
+- Iter 4 (Job Queue): 13/13 backend + Playwright E2E, enqueue latency ~570ms
 
-## Testing
-- Iter 1: 34/34 backend + all critical frontend
-- Iter 2 (Modpack Resolver): 14/14 backend + Playwright live-preview UI
-- Iter 3 (fixes): 8/8 backend, both regressions closed (status-stuck-installing, ZIP path traversal), plus failure-path verified
+## Implemented across all iterations
+Auth (bcrypt, roles, CSRF), Dashboard, Servers CRUD, real daemon start/stop/restart/kill, live console with stdin, Nodes, Users, Theme customizer, Discord bot, Activity log, Install docs + scripts, File Manager, Egg Marketplace (9 eggs), Server Installation chooser (20 loaders), Scheduled Backups (local + S3), **Live Modpack Resolver (Modrinth public API + CurseForge with user's key, cfwidget slug→id fallback) with async job queue**, PWA (manifest, service worker, install banner).
 
 ## Prioritized backlog
-- **P0**: Real Docker/OS shims per loader (Paper JAR, Forge installer)
-- **P0**: Background job queue so 100+ MB CurseForge packs don't hold a PHP-FPM worker
-- **P1**: WebSocket console + metrics
-- **P1**: Nginx + SSL via Certbot in install.sh, Redis-backed sessions & rate limits
-- **P1**: Reject symlinks in ZIP overrides (defense-in-depth on top of current path check)
-- **P2**: Per-server ACLs / subusers, i18n, Capacitor mobile wrapper
+- **P0**: Real loader runtimes (Paper JAR, Forge installer, Docker) — swap `fake_game.py` for real game processes
+- **P1**: Concurrency guard on install-async (reject queueing if a running job already exists for this server)
+- **P1**: Symlink rejection in ZIP override extraction (defense-in-depth over current path check)
+- **P1**: WebSocket console + metrics (replace 1.5s polling)
+- **P1**: Nginx + SSL via Certbot in install.sh, Redis-backed sessions
+- **P2**: Per-server ACLs, i18n, Capacitor mobile wrapper
 
-## Credentials & preview
-See `/app/memory/test_credentials.md`. Preview URL: https://69a53a13-fcf8-447b-9ea3-aa05080c4689.preview.emergentagent.com/
+## Credentials
+See `/app/memory/test_credentials.md`. Preview: https://69a53a13-fcf8-447b-9ea3-aa05080c4689.preview.emergentagent.com/

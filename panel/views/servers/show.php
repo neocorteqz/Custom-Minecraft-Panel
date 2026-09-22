@@ -78,11 +78,21 @@
   const sid = <?= (int)$s['id'] ?>;
   const panel = document.getElementById('jobs-panel');
   const list = document.getElementById('jobs-list');
+  function escapeHtml(s){return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+  let lastCompletedSeen = new Set();
   async function tick() {
     try {
       const r = await fetch(`/json/servers/${sid}/jobs`);
       if (!r.ok) return;
       const jobs = await r.json();
+      // If any modpack_install job just transitioned to completed and we haven't reloaded yet, refresh once
+      const justCompleted = jobs.find(j => j.status === 'completed' && j.kind === 'modpack_install' && !lastCompletedSeen.has(j.id));
+      jobs.filter(j => j.status === 'completed').forEach(j => lastCompletedSeen.add(j.id));
+      if (justCompleted && sessionStorage.getItem('apex-reloaded-job-' + justCompleted.id) !== '1') {
+        sessionStorage.setItem('apex-reloaded-job-' + justCompleted.id, '1');
+        location.reload();
+        return;
+      }
       const active = jobs.filter(j => j.status === 'queued' || j.status === 'running');
       if (active.length === 0 && !panel.dataset.wasVisible) {
         panel.style.display = 'none';
@@ -90,7 +100,6 @@
       }
       panel.dataset.wasVisible = '1';
       panel.style.display = 'block';
-      // Render newest 3
       list.innerHTML = jobs.slice(0, 3).map(j => {
         const cls = j.status === 'completed' ? 'online' : j.status === 'failed' ? 'offline' : j.status === 'running' ? 'starting' : 'installing';
         return `
@@ -105,7 +114,6 @@
       }).join('');
     } catch (_) {}
   }
-  function escapeHtml(s){return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
   setInterval(tick, 2000);
   tick();
 })();

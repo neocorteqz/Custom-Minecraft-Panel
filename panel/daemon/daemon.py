@@ -28,42 +28,47 @@ from pydantic import BaseModel
 import pack_resolver
 
 
+def _job_exec(sql: str, args: tuple = (), *, lastrowid: bool = False):
+    conn = db()
+    try:
+        with conn.cursor() as c:
+            c.execute(sql, args)
+            return c.lastrowid if lastrowid else None
+    finally:
+        conn.close()
+
+
 def create_job(kind: str, target_kind: str, target_id: int, message: str = "") -> int:
-    with db().cursor() as c:
-        c.execute(
-            "INSERT INTO jobs (kind, target_kind, target_id, status, message) VALUES (%s,%s,%s,'queued',%s)",
-            (kind, target_kind, target_id, message[:255]),
-        )
-        return c.lastrowid
+    return _job_exec(
+        "INSERT INTO jobs (kind, target_kind, target_id, status, message) VALUES (%s,%s,%s,'queued',%s)",
+        (kind, target_kind, target_id, message[:255]),
+        lastrowid=True,
+    )
 
 
 def job_running(job_id: int):
-    with db().cursor() as c:
-        c.execute("UPDATE jobs SET status='running', started_at=NOW() WHERE id=%s", (job_id,))
+    _job_exec("UPDATE jobs SET status='running', started_at=NOW() WHERE id=%s", (job_id,))
 
 
 def job_progress(job_id: int, done: int, total: int, message: str = ""):
-    with db().cursor() as c:
-        c.execute(
-            "UPDATE jobs SET progress=%s, total=%s, message=%s WHERE id=%s",
-            (done, total, message[:255], job_id),
-        )
+    _job_exec(
+        "UPDATE jobs SET progress=%s, total=%s, message=%s WHERE id=%s",
+        (done, total, message[:255], job_id),
+    )
 
 
 def job_complete(job_id: int):
-    with db().cursor() as c:
-        c.execute(
-            "UPDATE jobs SET status='completed', progress=total, completed_at=NOW() WHERE id=%s",
-            (job_id,),
-        )
+    _job_exec(
+        "UPDATE jobs SET status='completed', progress=total, completed_at=NOW() WHERE id=%s",
+        (job_id,),
+    )
 
 
 def job_fail(job_id: int, error: str):
-    with db().cursor() as c:
-        c.execute(
-            "UPDATE jobs SET status='failed', error=%s, completed_at=NOW() WHERE id=%s",
-            (error[:4000], job_id),
-        )
+    _job_exec(
+        "UPDATE jobs SET status='failed', error=%s, completed_at=NOW() WHERE id=%s",
+        (error[:4000], job_id),
+    )
 
 DB_HOST = os.environ.get("DB_HOST", "127.0.0.1")
 DB_USER = os.environ.get("DB_USER", "apexnode")
@@ -90,40 +95,60 @@ def db():
 
 def log_line(server_id: int, line: str, level: str = "info"):
     try:
-        with db().cursor() as c:
-            c.execute("INSERT INTO server_logs (server_id, line, level) VALUES (%s, %s, %s)",
-                      (server_id, line[:2000], level))
+        conn = db()
+        try:
+            with conn.cursor() as c:
+                c.execute("INSERT INTO server_logs (server_id, line, level) VALUES (%s, %s, %s)",
+                          (server_id, line[:2000], level))
+        finally:
+            conn.close()
     except Exception as e:
         print(f"log_line err {e}", file=sys.stderr)
 
 
 def get_server(sid: int):
-    with db().cursor() as c:
-        c.execute("SELECT * FROM servers WHERE id=%s", (sid,))
-        return c.fetchone()
+    conn = db()
+    try:
+        with conn.cursor() as c:
+            c.execute("SELECT * FROM servers WHERE id=%s", (sid,))
+            return c.fetchone()
+    finally:
+        conn.close()
 
 
 def get_egg(egg_id):
     if not egg_id:
         return None
-    with db().cursor() as c:
-        c.execute("SELECT * FROM eggs WHERE id=%s", (egg_id,))
-        return c.fetchone()
+    conn = db()
+    try:
+        with conn.cursor() as c:
+            c.execute("SELECT * FROM eggs WHERE id=%s", (egg_id,))
+            return c.fetchone()
+    finally:
+        conn.close()
 
 
 def get_loader(loader_id):
     if not loader_id:
         return None
-    with db().cursor() as c:
-        c.execute("SELECT * FROM mod_loaders WHERE id=%s", (loader_id,))
-        return c.fetchone()
+    conn = db()
+    try:
+        with conn.cursor() as c:
+            c.execute("SELECT * FROM mod_loaders WHERE id=%s", (loader_id,))
+            return c.fetchone()
+    finally:
+        conn.close()
 
 
 def get_setting(key: str) -> str:
-    with db().cursor() as c:
-        c.execute("SELECT v FROM settings WHERE k=%s", (key,))
-        row = c.fetchone()
-        return row["v"] if row else ""
+    conn = db()
+    try:
+        with conn.cursor() as c:
+            c.execute("SELECT v FROM settings WHERE k=%s", (key,))
+            row = c.fetchone()
+            return row["v"] if row else ""
+    finally:
+        conn.close()
 
 
 def set_status(sid: int, status: str, **fields):
@@ -133,8 +158,12 @@ def set_status(sid: int, status: str, **fields):
         parts.append(f"{k}=%s")
         args.append(v)
     args.append(sid)
-    with db().cursor() as c:
-        c.execute(f"UPDATE servers SET {', '.join(parts)} WHERE id=%s", args)
+    conn = db()
+    try:
+        with conn.cursor() as c:
+            c.execute(f"UPDATE servers SET {', '.join(parts)} WHERE id=%s", args)
+    finally:
+        conn.close()
 
 
 MODPACK_SOURCES = {
@@ -162,21 +191,17 @@ def install_modpack_if_needed(server) -> None:
     prior_status = server.get("status", "offline")
     log_line(sid, f"[modpack] Installing '{ref}' from {source}…", "system")
     set_status(sid, "installing")
-    with db().cursor() as c:
-        c.execute("UPDATE servers SET modpack_status='installing' WHERE id=%s", (sid,))
+    _job_exec("UPDATE servers SET modpack_status='installing' WHERE id=%s", (sid,))
     wd = STATE_ROOT / "servers" / str(sid)
     wd.mkdir(parents=True, exist_ok=True)
     cf_key = get_setting("curseforge_api_key")
     try:
         pack_resolver.install(source, ref, wd, lambda l, lv: log_line(sid, l, lv), cf_api_key=cf_key)
-        with db().cursor() as c:
-            c.execute("UPDATE servers SET modpack_status='installed' WHERE id=%s", (sid,))
-        # Restore the server's operational status now that the install is done
+        _job_exec("UPDATE servers SET modpack_status='installed' WHERE id=%s", (sid,))
         set_status(sid, prior_status if prior_status not in ("installing", "starting") else "offline")
         log_line(sid, "[modpack] ✓ Ready to boot", "system")
     except Exception as e:
-        with db().cursor() as c:
-            c.execute("UPDATE servers SET modpack_status='failed' WHERE id=%s", (sid,))
+        _job_exec("UPDATE servers SET modpack_status='failed' WHERE id=%s", (sid,))
         set_status(sid, "crashed")
         log_line(sid, f"[modpack] ✗ FAILED: {e}", "error")
         raise
@@ -204,8 +229,7 @@ def ensure_workdir(server) -> Path:
             (wd / fname).parent.mkdir(parents=True, exist_ok=True)
             (wd / fname).write_text(content)
     # Persist work_dir
-    with db().cursor() as c:
-        c.execute("UPDATE servers SET work_dir=%s WHERE id=%s", (str(wd), server["id"]))
+    _job_exec("UPDATE servers SET work_dir=%s WHERE id=%s", (str(wd), server["id"]))
     return wd
 
 
@@ -426,8 +450,7 @@ async def _run_modpack_job(job_id: int, sid: int) -> None:
             raise pack_resolver.ResolveError(f"unsupported source: {loader['slug']}")
         prior = server.get("status", "offline")
         set_status(sid, "installing")
-        with db().cursor() as c:
-            c.execute("UPDATE servers SET modpack_status='installing' WHERE id=%s", (sid,))
+        _job_exec("UPDATE servers SET modpack_status='installing' WHERE id=%s", (sid,))
         wd = STATE_ROOT / "servers" / str(sid)
         wd.mkdir(parents=True, exist_ok=True)
         cf_key = get_setting("curseforge_api_key")
@@ -437,8 +460,7 @@ async def _run_modpack_job(job_id: int, sid: int) -> None:
             cf_api_key=cf_key,
             progress=lambda done, total, msg: job_progress(job_id, done, total, msg),
         )
-        with db().cursor() as c:
-            c.execute("UPDATE servers SET modpack_status='installed' WHERE id=%s", (sid,))
+        _job_exec("UPDATE servers SET modpack_status='installed' WHERE id=%s", (sid,))
         set_status(sid, prior if prior not in ("installing", "starting") else "offline")
         log_line(sid, "[modpack] ✓ Ready to boot", "system")
 
@@ -447,8 +469,7 @@ async def _run_modpack_job(job_id: int, sid: int) -> None:
         await loop.run_in_executor(None, blocking)
         job_complete(job_id)
     except Exception as e:
-        with db().cursor() as c:
-            c.execute("UPDATE servers SET modpack_status='failed' WHERE id=%s", (sid,))
+        _job_exec("UPDATE servers SET modpack_status='failed' WHERE id=%s", (sid,))
         set_status(sid, "crashed")
         log_line(sid, f"[modpack] ✗ FAILED: {e}", "error")
         job_fail(job_id, str(e))
@@ -456,9 +477,13 @@ async def _run_modpack_job(job_id: int, sid: int) -> None:
 
 @app.get("/api/daemon/jobs/{job_id}")
 async def get_job(job_id: int):
-    with db().cursor() as c:
-        c.execute("SELECT * FROM jobs WHERE id=%s", (job_id,))
-        row = c.fetchone()
+    conn = db()
+    try:
+        with conn.cursor() as c:
+            c.execute("SELECT * FROM jobs WHERE id=%s", (job_id,))
+            row = c.fetchone()
+    finally:
+        conn.close()
     if not row:
         raise HTTPException(404, "job not found")
     return row

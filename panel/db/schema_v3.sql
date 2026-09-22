@@ -19,3 +19,4 @@ CREATE TABLE IF NOT EXISTS mod_loaders (
 
 ALTER TABLE servers ADD COLUMN IF NOT EXISTS loader_id INT DEFAULT NULL AFTER egg_id;
 ALTER TABLE servers ADD COLUMN IF NOT EXISTS modpack_ref VARCHAR(120) DEFAULT NULL AFTER loader_id;
+ALTER TABLE servers ADD COLUMN IF NOT EXISTS modpack_status ENUM('none','pending','installing','installed','failed') DEFAULT 'none' AFTER modpack_ref;

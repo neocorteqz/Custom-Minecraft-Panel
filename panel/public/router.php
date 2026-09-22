@@ -169,5 +169,4 @@ if (isset($routes[$key])) {
 }
 
 http_response_code(404);
-require __DIR__ . '/../app/helpers.php';
 view('errors/404');
